@@ -3,8 +3,19 @@
 uGUI ScrollRect 기반 가상화·셀 재사용 스크롤러를 직접 구현하는 프로젝트.
 Unity 6000.6.0f1, URP, uGUI 2.6.0.
 
-> **미정**: 설계 방향과 목표 범위 (2026-10-01 기준, 별도 세션에서 결정 예정).
-> 정해지면 이 절을 갱신한다. 정하기 전에는 스크롤러 본체 구현을 시작하지 않는다.
+## 설계 방향 (2026-10-01 결정)
+
+UITableView·RecyclerView·UI Toolkit ListView 등 여러 가상화 목록 UI가 공통으로 쓰는 델리게이트·셀 재사용 패턴을
+uGUI ScrollRect에 맞게 새로 설계한다. 조사 근거: `docs/research/2026-10-01-scroller-design-research.md`
+
+- 공개 타입은 `CyScroller` / `ICyScrollerDelegate` / `CyScrollerCellView`
+- 특정 라이브러리와의 소스 호환은 목표가 아니다. 다른 목록 UI와의 개념 대응표는 패키지 `Documentation~/api-mapping.md`
+- v0.1.0 범위: 세로·가로 가상화, 가변 크기, cellIdentifier 풀링, 점프·트윈, 루프, 스냅, 이벤트
+- 밖: 그리드 전용 API, 중첩 스크롤 제스처 분배, 셀 자동 크기 측정
+
+## 보고
+
+작업 보고 웹훅 키는 `DISCORD_REPORT_WEBHOOK_URL` (전역 스킬 `webhook-report`).
 
 ## 구조 (2026-10-01 결정)
 
