@@ -35,6 +35,16 @@ Assets/Dev/                         개발·검증 씬 (패키지에 포함 안 
 - 루트 네임스페이스 `CyKim.Scroller`. 런타임 asmdef는 `UnityEngine.UI`만 참조한다
 - 패키지 코드는 `Assets/`의 코드를 참조하지 않는다 (의존 방향은 Assets → 패키지 한쪽)
 - 테스트가 Test Runner에 안 보이면 `Packages/manifest.json`의 `testables`에 패키지 이름을 넣는다
+- 로드맵: `docs/roadmap/2026-10-01-scroller-roadmap.md` (v0.2 이후 후보·사용자 선택 필요 항목)
+
+## 검증 (2026-10-01)
+
+- 테스트: MCP `run_tests` — EditMode `CyKim.Scroller.Editor.Tests`, PlayMode `CyKim.Scroller.Tests` (`init_timeout` 120000)
+- 스크롤 핫패스 할당 0은 PlayMode 테스트 `Scrolling_DoesNotAllocateAfterWarmup`이 지킨다. 핫패스를 고치면 반드시 돌린다
+- 샘플 확인: `Sample.FindByPackage(...).Import()`로 `Assets/Samples/`에 가져와 확인한 뒤 **지운다** (커밋하지 않는다)
+- 스트레스: `Assets/Dev/Scenes/DevStress.unity` — 10만 셀 자동 스크롤 + 프레임 GC HUD
+- 에디터가 백그라운드면 플레이 프레임이 멈춘다. 런타임에서 `Application.runInBackground = true` (프로젝트 설정은 바꾸지 않는다)
+- PlayMode 테스트를 돌리면 저장 안 한 열린 씬이 교체된다. 임시 씬 작업은 테스트 전에 끝낸다
 
 ## 상시 규칙
 
