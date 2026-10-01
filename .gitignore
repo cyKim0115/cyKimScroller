@@ -1,0 +1,65 @@
+# ---- Unity ----
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ogs/
+[Uu]ser[Ss]ettings/
+[Mm]emoryCaptures/
+[Rr]ecordings/
+
+# Asset meta data (폴더가 비면 meta도 무시)
+!/[Aa]ssets/**/*.meta
+
+# Unity가 생성하는 솔루션/프로젝트 파일
+*.csproj
+*.unityproj
+*.sln
+*.slnx
+*.suo
+*.user
+*.userprefs
+*.pidb
+*.booproj
+*.svd
+*.pdb
+*.mdb
+*.opendb
+*.VC.db
+.vsconfig
+
+# 빌드 산출물
+*.apk
+*.aab
+*.ipa
+*.unitypackage
+*.app
+sysinfo.txt
+crashlytics-build.properties
+
+# Unity 6 IL2CPP 빌드 중간 캐시
+.utmp/
+
+# Performance Testing 패키지가 에디터 세션마다 만들었다 지우는 산출물
+/[Aa]ssets/[Rr]esources/PerformanceTestRun*.json
+/[Aa]ssets/[Rr]esources/PerformanceTestRun*.json.meta
+
+# ---- 시크릿 · 로컬 설정 ----
+.env
+.env.*
+!.env.example
+Secrets/
+
+# MCP 로컬 설정 (example만 커밋)
+.mcp.json
+
+# Claude Code 개인 설정
+.claude/settings.local.json
+
+# ---- OS / 에디터 ----
+.DS_Store
+Thumbs.db
+.idea/
+.vs/
+.vscode/
