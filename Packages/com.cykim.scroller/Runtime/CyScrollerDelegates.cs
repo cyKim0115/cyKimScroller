@@ -1,0 +1,28 @@
+using UnityEngine;
+
+namespace CyKim.Scroller
+{
+    /// <summary>셀 뷰가 보이게 되거나(<see cref="CyScrollerCellView.Active"/> true) 재활용될 때(false).</summary>
+    public delegate void CellViewVisibilityChangedHandler(CyScrollerCellView cellView);
+
+    /// <summary>풀에 없어서 프리팹을 새로 Instantiate했을 때.</summary>
+    public delegate void CellViewInstantiatedHandler(CyScroller scroller, CyScrollerCellView cellView);
+
+    /// <summary>풀에서 꺼내 다시 쓸 때.</summary>
+    public delegate void CellViewReusedHandler(CyScroller scroller, CyScrollerCellView cellView);
+
+    /// <summary>셀 뷰가 풀로 돌아가기 직전. 인덱스는 아직 유효하다.</summary>
+    public delegate void CellViewWillRecycleHandler(CyScrollerCellView cellView);
+
+    /// <summary>스크롤 위치가 바뀌었을 때. <paramref name="normalizedPosition"/>은 ScrollRect 값 그대로다.</summary>
+    public delegate void ScrollerScrolledHandler(CyScroller scroller, Vector2 normalizedPosition, float scrollPosition);
+
+    /// <summary>스냅 트윈이 끝났을 때. 셀이 활성 범위 밖이면 <paramref name="cellView"/>는 null이다.</summary>
+    public delegate void ScrollerSnappedHandler(CyScroller scroller, int cellIndex, int dataIndex, CyScrollerCellView cellView);
+
+    /// <summary>드래그·관성 이동 상태가 바뀔 때. 트윈 이동은 포함하지 않는다.</summary>
+    public delegate void ScrollerScrollingChangedHandler(CyScroller scroller, bool scrolling);
+
+    /// <summary>점프·스냅 트윈 상태가 바뀔 때.</summary>
+    public delegate void ScrollerTweeningChangedHandler(CyScroller scroller, bool tweening);
+}
