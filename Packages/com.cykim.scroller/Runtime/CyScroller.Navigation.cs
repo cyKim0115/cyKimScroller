@@ -217,7 +217,7 @@ namespace CyKim.Scroller
 
             if (tweenType == TweenType.Immediate || tweenTime <= 0f || Mathf.Approximately(from, target))
             {
-                SetScrollPositionInternal(target);
+                MoveContentTo(target);
                 UpdateActiveRange();
                 CompleteTween(onComplete, isSnap, slot, false);
                 return;
@@ -240,7 +240,7 @@ namespace CyKim.Scroller
             float t = _tweenElapsed >= _tweenDuration ? 1f : _tweenElapsed / _tweenDuration;
             float eased = CyScrollerEasing.Evaluate(_tweenType, t, _customTweenCurve);
 
-            SetScrollPositionInternal(Mathf.LerpUnclamped(_tweenFrom, _tweenTo, eased));
+            MoveContentTo(Mathf.LerpUnclamped(_tweenFrom, _tweenTo, eased));
             _scrollRect.velocity = Vector2.zero;
             UpdateActiveRange();
 
@@ -350,7 +350,7 @@ namespace CyKim.Scroller
             }
 
             target = Mathf.Clamp(target, 0f, ScrollSize);
-            SetScrollPositionInternal(target);
+            MoveContentTo(target);
             _alignedPosition = target;
             if (!_dragging)
             {
@@ -448,21 +448,18 @@ namespace CyKim.Scroller
                 return 0;
             }
 
-            float shift = cycles * _layout.CycleExtent;
             int slotShift = -cycles * _layout.DataCount;
 
-            SetScrollPositionInternal(position - shift);
+            // 보던 셀을 cycles 사이클 앞 사본 슬롯으로 옮기는 좌표 이동이다.
+            // 정렬 위치와 드래그 기준점·직전 위치는 ShiftScrollPosition이 같이 옮긴다 (손가락 아래 콘텐츠·관성 속도가 튀지 않게).
+            ShiftScrollPosition(-cycles * _layout.CycleExtent);
             ShiftActiveSlots(slotShift);
 
             if (_alignmentActive)
             {
                 _alignSlot += slotShift;
-                _alignedPosition -= shift;
             }
 
-            // ScrollRect는 드래그 시작 시점의 콘텐츠 위치를 기준으로 드래그를 계산한다.
-            // 순간이동한 위치를 새 기준으로 삼게 해서 손가락 아래 콘텐츠가 튀지 않게 한다.
-            SyncScrollRectAfterContentMove();
             return slotShift;
         }
     }
