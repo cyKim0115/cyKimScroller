@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using NUnit.Framework;
 
 namespace CyKim.Scroller.Tests
@@ -5,6 +7,11 @@ namespace CyKim.Scroller.Tests
     public class CyScrollerLayoutTests
     {
         private const float EPSILON = 0.0001f;
+
+        private const int RANDOM_SEED = 20261001;
+        private const int RANDOM_LAYOUTS = 300;
+        private const int RANDOM_POSITIONS = 24;
+        private const int RANDOM_BOUNDARY_SLOTS = 8;
 
         private static CyScrollerLayout CreateUniform(int count, float size, float spacing = 0f,
             float paddingBefore = 0f, float paddingAfter = 0f, bool loop = false, float viewport = 400f)
@@ -241,5 +248,307 @@ namespace CyKim.Scroller.Tests
             layout.Build(0f, 0f, 0f, false, 50f);
             Assert.AreEqual(500f, layout.ContentExtent, EPSILON);
         }
+
+        #region Random Reference
+
+        /// <summary>
+        /// 고정 시드로 무작위 레이아웃(크기 0·음수 포함, 간격·패딩·루프·뷰포트·미리보기)을 만들어
+        /// 슬롯 좌표와 이진 탐색 질의를 선형 탐색 기준 모델과 비교한다.
+        /// </summary>
+        [Test]
+        public void RandomLayouts_MatchLinearReferenceModel()
+        {
+            var random = new System.Random(RANDOM_SEED);
+
+            // 실제 사용처럼 인스턴스 하나를 재사용해 개수가 늘고 줄 때의 버퍼 재사용 경로도 지난다.
+            var layout = new CyScrollerLayout();
+            var positions = new List<double>();
+            int checkedQueries = 0;
+
+            for (int iteration = 0; iteration < RANDOM_LAYOUTS; iteration++)
+            {
+                // 값을 0.5 단위로 뽑아 float 합이 정확하게 한다 (경계 질의가 반올림에 흔들리지 않게).
+                int count = random.Next(0, 31);
+                var sizes = new float[count];
+                for (int i = 0; i < count; i++)
+                {
+                    int roll = random.Next(10);
+                    sizes[i] = roll < 3 ? 0f : roll == 3 ? -random.Next(1, 20) : random.Next(1, 401) * 0.5f;
+                }
+
+                float spacing = random.Next(3) == 0 ? 0f : random.Next(1, 41) * 0.5f;
+                float paddingBefore = random.Next(3) == 0 ? 0f : random.Next(1, 81) * 0.5f;
+                float paddingAfter = random.Next(3) == 0 ? 0f : random.Next(1, 81) * 0.5f;
+                bool loop = random.Next(2) == 0;
+                float viewport = random.Next(0, 1201) * 0.5f;
+                float lookAheadBefore = random.Next(2) == 0 ? 0f : random.Next(1, 401) * 0.5f;
+                float lookAheadAfter = random.Next(2) == 0 ? 0f : random.Next(1, 401) * 0.5f;
+
+                layout.SetDataCount(count);
+                for (int i = 0; i < count; i++)
+                {
+                    layout.SetSize(i, sizes[i]);
+                }
+
+                layout.Build(spacing, paddingBefore, paddingAfter, loop, viewport, lookAheadBefore, lookAheadAfter);
+
+                string context = $"#{iteration} count={count} spacing={spacing} padding={paddingBefore}/{paddingAfter} " +
+                                 $"loop={loop} viewport={viewport} lookAhead={lookAheadBefore}/{lookAheadAfter} sets={layout.SetCount}";
+
+                // 루프 여부와 세트 수 규칙. 세트 수 자체는 다른 테스트가 검증하므로 기준 모델은 같은 값을 쓴다.
+                double cycle = LinearReferenceLayout.GetCycleExtent(sizes, spacing);
+                bool expectLoop = loop && count > 0 && cycle > 0.0;
+                Assert.AreEqual(expectLoop, layout.IsLoop, context);
+                if (expectLoop)
+                {
+                    Assert.GreaterOrEqual(layout.SetCount, 5, context);
+                    Assert.AreEqual(1, layout.SetCount % 2, context);
+                }
+                else
+                {
+                    Assert.AreEqual(1, layout.SetCount, context);
+                }
+
+                var reference = new LinearReferenceLayout(sizes, spacing, paddingBefore, paddingAfter, layout.SetCount);
+                Assert.AreEqual(reference.SlotCount, layout.SlotCount, context);
+                Assert.AreEqual(cycle, layout.CycleExtent, EPSILON, context);
+                Assert.AreEqual(reference.ContentExtent, layout.ContentExtent, EPSILON, context);
+                if (expectLoop)
+                {
+                    int middleFirst = layout.SetCount / 2 * count;
+                    Assert.AreEqual(middleFirst, layout.MiddleSetFirstSlot, context);
+                    Assert.AreEqual(reference.Starts[middleFirst], layout.MiddleSetStart, EPSILON, context);
+                }
+
+                AssertSlotCoordinates(layout, reference, sizes, context);
+
+                positions.Clear();
+                for (int q = 0; q < RANDOM_POSITIONS; q++)
+                {
+                    positions.Add(random.Next(-160, (int)(reference.ContentExtent * 4.0) + 161) * 0.25);
+                }
+
+                // 경계 위·바로 앞뒤·셀 가운데·간격 가운데 (반열린 구간, 가까운 셀 동률 규칙)
+                for (int q = 0; q < RANDOM_BOUNDARY_SLOTS && reference.SlotCount > 0; q++)
+                {
+                    int slot = random.Next(reference.SlotCount);
+                    double start = reference.Starts[slot];
+                    double end = reference.Ends[slot];
+                    positions.Add(start);
+                    positions.Add(end);
+                    positions.Add(start - 0.25);
+                    positions.Add(end + 0.25);
+                    positions.Add((start + end) * 0.5);
+                    if (slot + 1 < reference.SlotCount)
+                    {
+                        positions.Add((end + reference.Starts[slot + 1]) * 0.5);
+                    }
+                }
+
+                for (int q = 0; q < positions.Count; q++)
+                {
+                    double position = positions[q];
+                    AssertIndex("GetSlotAtPosition", position,
+                        reference.GetSlotAtPosition(position), layout.GetSlotAtPosition((float)position), context);
+                    AssertIndex("GetNearestSlot", position,
+                        reference.GetNearestSlot(position), layout.GetNearestSlot((float)position), context);
+
+                    // 길이 0·음수(빈 구간)도 섞는다.
+                    double to = position + random.Next(-8, (int)((viewport + 200f) * 4f) + 1) * 0.25;
+                    AssertRange(position, to, reference, layout, context);
+                    checkedQueries += 3;
+                }
+
+                // 셀 경계끼리 맞닿은 구간
+                for (int q = 0; q < RANDOM_BOUNDARY_SLOTS && reference.SlotCount > 0; q++)
+                {
+                    int a = random.Next(reference.SlotCount);
+                    int b = random.Next(a, reference.SlotCount);
+                    AssertRange(reference.Ends[a], reference.Starts[b], reference, layout, context);
+                    AssertRange(reference.Starts[a], reference.Ends[b], reference, layout, context);
+                    checkedQueries += 2;
+                }
+            }
+
+            Assert.Greater(checkedQueries, RANDOM_LAYOUTS * RANDOM_POSITIONS, "질의가 충분히 돌아야 한다");
+        }
+
+        private static void AssertSlotCoordinates(CyScrollerLayout layout, LinearReferenceLayout reference, float[] sizes, string context)
+        {
+            for (int slot = 0; slot < reference.SlotCount; slot++)
+            {
+                double start = layout.GetSlotStart(slot);
+                double end = layout.GetSlotEnd(slot);
+                double size = layout.GetSlotSize(slot);
+                int dataIndex = layout.SlotToDataIndex(slot);
+                if (Math.Abs(start - reference.Starts[slot]) > EPSILON
+                    || Math.Abs(end - reference.Ends[slot]) > EPSILON
+                    || Math.Abs(size - Math.Max(0f, sizes[slot % sizes.Length])) > EPSILON
+                    || dataIndex != slot % sizes.Length)
+                {
+                    Assert.Fail($"slot {slot}: start {start} / {reference.Starts[slot]}, end {end} / {reference.Ends[slot]}, " +
+                                $"size {size}, data {dataIndex} (실제 / 기준) ({context})");
+                }
+            }
+        }
+
+        private static void AssertIndex(string query, double position, int expected, int actual, string context)
+        {
+            if (expected != actual)
+            {
+                Assert.Fail($"{query}({position}): 기준 {expected}, 실제 {actual} ({context})");
+            }
+        }
+
+        private static void AssertRange(double from, double to, LinearReferenceLayout reference, CyScrollerLayout layout, string context)
+        {
+            reference.GetSlotRange(from, to, out int expectedFirst, out int expectedLast);
+            layout.GetSlotRange((float)from, (float)to, out int first, out int last);
+            if (expectedFirst != first || expectedLast != last)
+            {
+                Assert.Fail($"GetSlotRange({from}, {to}): 기준 [{expectedFirst}, {expectedLast}], 실제 [{first}, {last}] ({context})");
+            }
+        }
+
+        /// <summary>
+        /// 선형 탐색 기준 모델. 슬롯 좌표를 처음부터 차례로 더해 만들고, 모든 질의에 슬롯 전체를 앞에서부터 훑어 답한다.
+        /// </summary>
+        private sealed class LinearReferenceLayout
+        {
+            public readonly double[] Starts;
+            public readonly double[] Ends;
+            public readonly double ContentExtent;
+
+            public LinearReferenceLayout(float[] sizes, float spacing, float paddingBefore, float paddingAfter, int setCount)
+            {
+                int slotCount = sizes.Length * setCount;
+                Starts = new double[slotCount];
+                Ends = new double[slotCount];
+
+                // 사이클 사이에도 간격이 들어간다 (루프 세트를 이어 붙인 것과 같다).
+                double position = paddingBefore;
+                for (int slot = 0; slot < slotCount; slot++)
+                {
+                    double size = Math.Max(0f, sizes[slot % sizes.Length]);
+                    Starts[slot] = position;
+                    Ends[slot] = position + size;
+                    position += size + spacing;
+                }
+
+                // 마지막 셀 뒤에는 간격 없이 뒤 패딩만 붙는다.
+                ContentExtent = slotCount == 0 ? paddingBefore + paddingAfter : Ends[slotCount - 1] + paddingAfter;
+            }
+
+            public int SlotCount => Starts.Length;
+
+            public static double GetCycleExtent(float[] sizes, float spacing)
+            {
+                double cycle = 0.0;
+                for (int i = 0; i < sizes.Length; i++)
+                {
+                    cycle += Math.Max(0f, sizes[i]) + spacing;
+                }
+
+                return cycle;
+            }
+
+            /// <summary>(from, to)와 조금이라도 겹치는 슬롯. 끝이 from이거나 시작이 to인 슬롯은 겹치지 않는다. 없으면 [0, -1].</summary>
+            public void GetSlotRange(double from, double to, out int first, out int last)
+            {
+                first = 0;
+                last = -1;
+                if (to <= from)
+                {
+                    return;
+                }
+
+                bool found = false;
+                for (int slot = 0; slot < SlotCount; slot++)
+                {
+                    if (Ends[slot] > from && Starts[slot] < to)
+                    {
+                        if (!found)
+                        {
+                            first = slot;
+                            found = true;
+                        }
+
+                        last = slot;
+                    }
+                }
+            }
+
+            /// <summary>시작 ≤ position인 마지막 슬롯. 그런 슬롯이 없으면 0, 슬롯이 없으면 -1.</summary>
+            public int GetSlotAtPosition(double position)
+            {
+                if (SlotCount == 0)
+                {
+                    return -1;
+                }
+
+                int found = 0;
+                for (int slot = 0; slot < SlotCount; slot++)
+                {
+                    if (Starts[slot] <= position)
+                    {
+                        found = slot;
+                    }
+                }
+
+                return found;
+            }
+
+            /// <summary>
+            /// 슬롯 구간까지 거리(안이면 0)가 가장 작은 슬롯. 시작이 position 이하인 앞쪽 후보끼리는 뒤의 것,
+            /// 뒤쪽 후보끼리는 앞의 것을 고르고, 앞뒤 거리가 같으면 앞쪽 후보를 고른다.
+            /// </summary>
+            public int GetNearestSlot(double position)
+            {
+                if (SlotCount == 0)
+                {
+                    return -1;
+                }
+
+                int before = -1;
+                int after = -1;
+                double beforeDistance = double.MaxValue;
+                double afterDistance = double.MaxValue;
+                for (int slot = 0; slot < SlotCount; slot++)
+                {
+                    if (Starts[slot] <= position)
+                    {
+                        double distance = Math.Max(0.0, position - Ends[slot]);
+                        if (distance <= beforeDistance)
+                        {
+                            before = slot;
+                            beforeDistance = distance;
+                        }
+                    }
+                    else
+                    {
+                        double distance = Starts[slot] - position;
+                        if (distance < afterDistance)
+                        {
+                            after = slot;
+                            afterDistance = distance;
+                        }
+                    }
+                }
+
+                if (before < 0)
+                {
+                    return after;
+                }
+
+                if (after < 0)
+                {
+                    return before;
+                }
+
+                return beforeDistance <= afterDistance ? before : after;
+            }
+        }
+
+        #endregion
     }
 }
