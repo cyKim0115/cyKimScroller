@@ -1,0 +1,29 @@
+{
+  "name": "com.cykim.scroller",
+  "version": "0.1.0",
+  "displayName": "CyKim Scroller",
+  "description": "Virtualized uGUI ScrollRect with cell view recycling, variable cell sizes, jumping with tweens, looping and snapping. Only the visible cells exist; everything else is empty scroll extent.",
+  "unity": "6000.0",
+  "dependencies": {
+    "com.unity.ugui": "2.0.0"
+  },
+  "keywords": [
+    "ui",
+    "ugui",
+    "scroll",
+    "scrollrect",
+    "virtualization",
+    "recycle",
+    "list"
+  ],
+  "author": {
+    "name": "cyKim"
+  },
+  "samples": [
+    {
+      "displayName": "Basic",
+      "description": "Vertical list with variable cell heights, a horizontal looping carousel with snapping, and jump buttons. Builds its UI at runtime, so it only needs an empty scene.",
+      "path": "Samples~/Basic"
+    }
+  ]
+}
