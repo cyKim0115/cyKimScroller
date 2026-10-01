@@ -104,12 +104,17 @@ public class ItemCellView : CyScrollerCellView
   (첫 프레임 Canvas 크기 확정, 화면 회전에도 같은 셀이 같은 자리에 있다).
 - `ScrollPosition`·`NormalizedScrollPosition`을 대입하면 진행 중인 트윈·관성을 멈춘다. `ReloadData`도 관성을 멈춘다.
 - 드래그 중에 `JumpToDataIndex`·`Snap`을 부르면 그 드래그를 끝내고 이동한다 (코드 요청 우선). 반대로 사용자 드래그·휠은 진행 중인 트윈을 멈춘다.
+- 스크롤러가 코드로 콘텐츠를 옮기는 경로(루프 순환 보정, `ReloadDataKeepingPosition`·`Spacing` 등 재배치 뒤 위치 유지, `ScrollPosition` 대입)는 하나의 이동 루틴을 거친다.
+  드래그 중이면 손가락 아래 기준점과 ScrollRect의 직전 위치를 같이 옮기므로, 드래그 도중 재배치·순환 보정이 일어나도 콘텐츠가 손가락에서 떨어지지 않고 놓을 때 관성 속도도 튀지 않는다.
+  가장자리 너머로 당기는 중(Elastic)에도 같다. 다만 가장자리를 당기던 거리보다 더 넘기지는 않으며, 이어지는 드래그의 고무줄 저항도 끊기지 않는다.
+  드래그 중이 아니면 재배치 뒤 위치는 스크롤 범위 안으로 맞춘다.
 - 델리게이트·셀 이벤트 콜백 안에서 `ReloadData`·`ReloadDataKeepingPosition`·`Clear*`를 불러도 된다. 범위 갱신이 끝난 뒤 처리한다.
 - 루프 모드에서는 스크롤 축 스크롤바를 ScrollRect에서 떼어 숨기고, 루프를 끄면 다시 붙인다.
   `ScrollPosition`은 내부 슬롯 좌표이므로 저장·복원에는 `NormalizedScrollPosition`을 쓴다.
 - 루프는 뷰포트·미리보기 길이를 덮고도 양쪽에 한 사이클씩 남도록 세트 수(최소 5)를 정한다. 셀 크기가 모두 0이면 루프하지 않는다.
 - ScrollRect를 끄면(스크롤 잠금) CyScroller도 입력을 무시한다. 코드로 시작한 점프는 계속 진행된다.
 - `ActiveCellViews`는 `IReadOnlyList`다. GC를 피하려면 `foreach` 대신 `for` + 인덱서로 순회한다.
+- Profiler에서 `CyScroller.UpdateActiveRange`(활성 범위 갱신, 셀 바인딩 포함)와 `CyScroller.Relayout`(위치 유지 재배치) 마커로 비용을 확인할 수 있다.
 
 ## 샘플
 

@@ -45,6 +45,7 @@ Assets/Dev/                         개발·검증 씬 (패키지에 포함 안 
 - 스트레스: `Assets/Dev/Scenes/DevStress.unity` — 10만 셀 자동 스크롤 + 프레임 GC HUD
 - 에디터가 백그라운드면 플레이 프레임이 멈춘다. 런타임에서 `Application.runInBackground = true` (프로젝트 설정은 바꾸지 않는다)
 - PlayMode 테스트를 돌리면 저장 안 한 열린 씬이 교체된다. 임시 씬 작업은 테스트 전에 끝낸다
+- PlayMode를 연달아 돌리면 0개로 끝날 수 있다 (Enter Play Mode Options와 Test Framework 정적 캐시). 매 실행 전 `refresh_unity(compile="request", mode="force")`
 
 ## 상시 규칙
 
