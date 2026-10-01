@@ -365,18 +365,487 @@ namespace CyKim.Scroller.Tests
         }
 
         [UnityTest]
-        public IEnumerator Relayout_DuringJumpTween_FinishesAtNewTargetAndInvokesCallback()
+        public IEnumerator Relayout_DuringJumpTween_RetargetsAndInvokesCallbackOnce()
+        {
+            const float TWEEN_TIME = 1f;
+            const float TARGET = 5000f;
+            const float NEW_TARGET = 50 * 110f;
+            _fixture = ScrollerFixture.Create(ScrollDirection.Vertical, TestDelegate.Uniform(1000, 100f));
+            int completed = 0;
+            int tweenEnds = 0;
+            Scroller.ScrollerTweeningChanged += (_, tweening) =>
+            {
+                if (!tweening)
+                {
+                    tweenEnds++;
+                }
+            };
+
+            Scroller.JumpToDataIndex(50, 0f, 0f, false, TweenType.Linear, TWEEN_TIME, () => completed++);
+
+            // 맨 앞 셀이 0번이 아니게 될 때까지 간다. 0번이면 맨 앞 셀이 밀리지 않아 재배치 순간 검증이 비어 버린다.
+            yield return WaitFor(() => Scroller.ScrollPosition > 1000f, 2f);
+            Assert.IsTrue(Scroller.IsTweening);
+
+            // 0 → 5000 선형 트윈이므로 지금 위치로 진행률을 안다.
+            float before = Scroller.ScrollPosition;
+            float progress = before / TARGET;
+            int topData = Mathf.FloorToInt(before / 100f);
+            Assert.Greater(topData, 0);
+            Scroller.Spacing = 10f;
+
+            float after = Scroller.ScrollPosition;
+            Assert.AreEqual(topData * 110f + (before - topData * 100f), after, EPSILON,
+                "재배치 순간에는 맨 앞 셀 기준으로 같은 화면이어야 한다");
+            Assert.IsTrue(Scroller.IsTweening, "재배치가 트윈을 끝내면 안 된다");
+            Assert.AreEqual(0, completed);
+
+            // 이번 프레임 LateUpdate는 지금 읽은 dt로 진행한다. 다음 위치는 재배치 순간 화면에서 새 목표까지 남은 시간 동안 가는 직선 위다.
+            // 시작점을 맨 앞 셀만큼만 옮기면 진행률 × (목표 이동량 500 − 맨 앞 셀 이동량)만큼 한 번에 튄다.
+            float nextProgress = Mathf.Min(1f, progress + Time.unscaledDeltaTime / TWEEN_TIME);
+            float expectedNext = NEW_TARGET + (after - NEW_TARGET) * (1f - nextProgress) / (1f - progress);
+            yield return null;
+            Assert.AreEqual(expectedNext, Scroller.ScrollPosition, 1f, "재배치 다음 프레임에 화면이 튀면 안 된다");
+
+            yield return WaitFor(() => completed > 0, 3f);
+
+            Assert.AreEqual(1, completed);
+            Assert.AreEqual(1, tweenEnds);
+            Assert.IsFalse(Scroller.IsTweening);
+            Assert.AreEqual(NEW_TARGET, Scroller.ScrollPosition, EPSILON, "새 배치의 목표에서 끝나야 한다");
+
+            yield return null;
+            yield return null;
+            Assert.AreEqual(1, completed, "완료 콜백은 한 번만 불린다");
+        }
+
+        [Test]
+        public void JumpStartedInRangeCallbackOnFinalStep_IsNotCompletedEarly()
         {
             _fixture = ScrollerFixture.Create(ScrollDirection.Vertical, TestDelegate.Uniform(1000, 100f));
+            int firstCompleted = 0;
+            int secondCompleted = 0;
+            Scroller.JumpToDataIndex(30, 0f, 0f, false, TweenType.Linear, 1f, () => firstCompleted++);
+            Scroller.UpdateTween(0.5f);
+
+            bool started = false;
+            Scroller.CellViewVisibilityChanged += view =>
+            {
+                if (!started && view.Active)
+                {
+                    started = true;
+                    Scroller.JumpToDataIndex(10, 0f, 0f, false, TweenType.Linear, 1f, () => secondCompleted++);
+                }
+            };
+
+            // 마지막 걸음: 3000으로 가며 새 셀이 보이고, 그 표시 이벤트에서 새 점프를 시작한다.
+            Scroller.UpdateTween(0.6f);
+            Assert.IsTrue(started);
+            Assert.IsTrue(Scroller.IsTweening, "콜백에서 시작한 점프가 이전 트윈의 마지막 걸음에 끝나면 안 된다");
+            Assert.AreEqual(0, firstCompleted, "대신된 점프의 완료 콜백은 부르지 않는다");
+            Assert.AreEqual(0, secondCompleted);
+
+            Scroller.UpdateTween(1.1f);
+            Assert.AreEqual(1, secondCompleted);
+            Assert.AreEqual(1000f, Scroller.ScrollPosition, EPSILON);
+        }
+
+        [Test]
+        public void RelayoutRequestedOnFinalTweenStep_EndsAtNewLayoutTarget()
+        {
+            _fixture = ScrollerFixture.Create(ScrollDirection.Vertical, TestDelegate.Uniform(1000, 100f));
+            int completed = 0;
+
+            // 맨 위에서 30번(3000~3100)을 Nearest로 → End 목표 3100 − 400 = 2700
+            Scroller.ScrollIntoView(30, ScrollAlign.Nearest, 0f, TweenType.Linear, 0.3f, () => completed++);
+            Scroller.UpdateTween(0.2f);
+            Assert.IsNull(Scroller.GetCellViewAtDataIndex(30), "30번은 마지막 걸음에서 처음 보여야 한다");
+
+            // 30번이 처음 보일 때 크기를 재서(100 → 180) 위치 유지 리로드를 요청한다. 범위 갱신 중이라 미뤄진다.
+            bool resized = false;
+            Scroller.CellViewVisibilityChanged += view =>
+            {
+                if (!resized && view.Active && view.DataIndex == 30)
+                {
+                    resized = true;
+                    _fixture.Delegate.Sizes[30] = 180f;
+                    Scroller.ReloadDataKeepingPosition();
+                }
+            };
+
+            Scroller.UpdateTween(0.2f);
+
+            Assert.IsTrue(resized);
+            Assert.AreEqual(1, completed);
+            Assert.IsFalse(Scroller.IsTweening);
+            Assert.AreEqual(3180f - 400f, Scroller.ScrollPosition, EPSILON, "마지막 걸음에 미룬 재배치도 새 배치의 목표에서 끝나야 한다");
+            Assert.IsTrue(Scroller.IsDataIndexFullyVisible(30));
+
+            // 정렬도 살아 있어야 한다: 뷰포트가 커지면 같은 End 정렬로 다시 맞춘다.
+            ((RectTransform)_fixture.ScrollRect.transform).sizeDelta = new Vector2(ScrollerFixture.VIEWPORT_WIDTH, 600f);
+            _fixture.ScrollRect.onValueChanged.Invoke(Vector2.zero);
+            Assert.AreEqual(3180f - 600f, Scroller.ScrollPosition, EPSILON);
+        }
+
+        [Test]
+        public void LoopSnap_RelayoutRequestedOnFinalStep_ReportsCellInNewLayout()
+        {
+            // 시작 2000 (가운데 세트), 사이클 1000
+            _fixture = ScrollerFixture.Create(ScrollDirection.Vertical, TestDelegate.Uniform(10, 100f), loop: true);
+            Scroller.SnapTweenType = TweenType.Linear;
+            Scroller.SnapTweenTime = 1f;
+            Scroller.SnapWatchOffset = 0f;
+            Scroller.SnapJumpToOffset = 0f;
+            Scroller.SnapCellCenterOffset = 0f;
+            int snapped = 0;
+            int snappedCell = -1;
+            int snappedData = -1;
+            CyScrollerCellView snappedView = null;
+            Scroller.ScrollerSnapped += (_, cellIndex, dataIndex, view) =>
+            {
+                snapped++;
+                snappedCell = cellIndex;
+                snappedData = dataIndex;
+                snappedView = view;
+            };
+
+            // 2380에서 맨 앞 셀 3번(슬롯 23, 2300)으로 스냅한다. 절반 지점(2340)까지 슬롯 23~27이 보인다.
+            Scroller.ScrollPosition = 2380f;
+            Scroller.Snap();
+            Scroller.UpdateTween(0.5f);
+
+            // 마지막 걸음에 슬롯 27이 회수될 때 목록을 5개로 줄이고 위치 유지 리로드를 요청한다 → 슬롯 번호가 바뀐다.
+            bool shrunk = false;
+            Scroller.CellViewVisibilityChanged += view =>
+            {
+                if (!shrunk)
+                {
+                    shrunk = true;
+                    _fixture.Delegate.Sizes = TestDelegate.Uniform(5, 100f);
+                    Scroller.ReloadDataKeepingPosition();
+                }
+            };
+
+            Scroller.UpdateTween(0.6f);
+
+            Assert.IsTrue(shrunk);
+            Assert.AreEqual(1, snapped);
+            Assert.AreEqual(3, snappedData);
+            Assert.IsNotNull(snappedView, "스냅 이벤트의 슬롯은 새 배치 기준이어야 셀 뷰를 찾는다");
+            Assert.AreEqual(3, snappedView.DataIndex);
+            Assert.AreEqual(snappedCell, snappedView.CellIndex);
+            Assert.AreEqual(Scroller.GetScrollPositionForCellViewIndex(snappedCell), Scroller.ScrollPosition, EPSILON);
+        }
+
+        [Test]
+        public void Relayout_LateInTween_NextStepDoesNotJump()
+        {
+            _fixture = ScrollerFixture.Create(ScrollDirection.Vertical, TestDelegate.Uniform(200, 100f));
+            int completed = 0;
+
+            // 0 → 100번 End(10100 − 400 = 9700) 선형 1초. 95% 지점(9215)에서 간격 20을 준다.
+            Scroller.ScrollIntoView(100, ScrollAlign.End, 0f, TweenType.Linear, 1f, () => completed++);
+            Scroller.UpdateTween(0.95f);
+            Assert.AreEqual(9215f, Scroller.ScrollPosition, FAR_POSITION_EPSILON);
+
+            // 맨 앞 셀(92번, 오프셋 15)은 92 × 20만큼, 목표(100번 끝)는 100 × 20만큼 밀린다.
+            Scroller.Spacing = 20f;
+            float after = Scroller.ScrollPosition;
+            Assert.AreEqual(92 * 120f + 15f, after, FAR_POSITION_EPSILON, "재배치 순간에는 맨 앞 셀 기준으로 같은 화면이어야 한다");
+
+            // 다음 걸음은 지금 화면에서 새 목표까지 남은 시간(5%) 중 1%만큼만 간다.
+            // 시작점을 맨 앞 셀만큼만 옮기면 0.95 × (2000 − 1840) = 152만큼 더 튄다.
+            const float NEW_TARGET = 100 * 120f + 100f - 400f;
+            Scroller.UpdateTween(0.01f);
+            float expected = NEW_TARGET + (after - NEW_TARGET) * (1f - 0.96f) / (1f - 0.95f);
+            Assert.AreEqual(expected, Scroller.ScrollPosition, FAR_POSITION_EPSILON, "재배치 다음 걸음에 화면이 튀면 안 된다");
+
+            Scroller.UpdateTween(0.05f);
+            Assert.AreEqual(1, completed);
+            Assert.AreEqual(NEW_TARGET, Scroller.ScrollPosition, FAR_POSITION_EPSILON);
+            Assert.IsTrue(Scroller.IsDataIndexFullyVisible(100));
+        }
+
+        [Test]
+        public void ViewportResize_DuringTween_NextStepDoesNotJump()
+        {
+            _fixture = ScrollerFixture.Create(ScrollDirection.Vertical, TestDelegate.Uniform(1000, 100f));
+            int completed = 0;
+
+            // 0 → 50번 가운데(5050 − 200 = 4850). 절반 지점(2425)에서 뷰포트를 600으로 키우면 목표는 5050 − 300 = 4750.
+            Scroller.JumpToDataIndex(50, 0.5f, 0.5f, false, TweenType.EaseInOutCubic, 1f, () => completed++);
+            Scroller.UpdateTween(0.5f);
+            Assert.AreEqual(2425f, Scroller.ScrollPosition, EPSILON);
+
+            ((RectTransform)_fixture.ScrollRect.transform).sizeDelta = new Vector2(ScrollerFixture.VIEWPORT_WIDTH, 600f);
+            _fixture.ScrollRect.onValueChanged.Invoke(Vector2.zero);
+            Assert.AreEqual(2425f, Scroller.ScrollPosition, EPSILON, "크기가 바뀐 순간 화면은 그대로");
+            Assert.IsTrue(Scroller.IsTweening);
+
+            // 다음 걸음은 2425에서 4750까지 곡선의 남은 모양(남은 진행 비율)대로 간다.
+            // 시작점을 그대로 두면 진행률 × 목표 이동량(0.5 × −100)만큼 튀고, 곡선을 처음부터 다시 그리면 거의 멈춘다.
+            const float NEW_TARGET = 4750f;
+            float eased = CyScrollerEasing.Evaluate(TweenType.EaseInOutCubic, 0.5f);
+            float nextEased = CyScrollerEasing.Evaluate(TweenType.EaseInOutCubic, 0.6f);
+            Scroller.UpdateTween(0.1f);
+            float expected = NEW_TARGET + (2425f - NEW_TARGET) * (1f - nextEased) / (1f - eased);
+            Assert.AreEqual(expected, Scroller.ScrollPosition, EPSILON, "크기가 바뀐 다음 걸음에 화면이 튀면 안 된다");
+
+            Scroller.UpdateTween(0.5f);
+            Assert.AreEqual(1, completed);
+            Assert.AreEqual(NEW_TARGET, Scroller.ScrollPosition, EPSILON);
+        }
+
+        [Test]
+        public void PureShift_DuringOvershootTween_KeepsCurve()
+        {
+            _fixture = ScrollerFixture.Create(ScrollDirection.Vertical, TestDelegate.Uniform(200, 100f));
+
+            // 0 → 100번 시작(10000), 1을 넘었다 돌아오는 곡선.
+            Scroller.ScrollIntoView(100, ScrollAlign.Start, 0f, TweenType.EaseOutBack, 1f);
+            Scroller.UpdateTween(0.3f);
+
+            // 맨 앞 셀(90번)보다 앞의 0~4번이 100씩 커진다 → 화면과 목표가 같이 500 밀린다.
+            for (int i = 0; i < 5; i++)
+            {
+                _fixture.Delegate.Sizes[i] = 200f;
+            }
+
+            Scroller.ReloadDataKeepingPosition();
+
+            // 같이 밀렸으면 곡선을 새로 시작하지 않고, 재배치가 없던 곡선을 500만큼 옮긴 자리로 이어 간다.
+            const float SHIFT = 500f;
+            Scroller.UpdateTween(0.1f);
+            float expected = CyScrollerEasing.Evaluate(TweenType.EaseOutBack, 0.3f + 0.1f) * 10000f + SHIFT;
+            Assert.AreEqual(expected, Scroller.ScrollPosition, FAR_POSITION_EPSILON);
+        }
+
+        [Test]
+        public void Relayout_DuringOvershootTween_ContinuesFromScreen()
+        {
+            _fixture = ScrollerFixture.Create(ScrollDirection.Vertical, TestDelegate.Uniform(200, 100f));
+            int completed = 0;
+
+            // 0 → 100번 시작(10000). 40% 지점에서는 이미 목표를 넘어 있다 (EaseOutBack ≈ 1.029 → 10290).
+            Scroller.ScrollIntoView(100, ScrollAlign.Start, 0f, TweenType.EaseOutBack, 1f, () => completed++);
+            Scroller.UpdateTween(0.4f);
+            float before = Scroller.ScrollPosition;
+            int topData = Mathf.FloorToInt(before / 100f);
+
+            // 맨 앞 셀은 topData × 20, 목표는 100 × 20만큼 밀린다. 되돌아오는 곡선이라 남은 거리를 곡선에 싣지 않는다.
+            Scroller.Spacing = 20f;
+            float after = Scroller.ScrollPosition;
+            Assert.AreEqual(topData * 120f + (before - topData * 100f), after, FAR_POSITION_EPSILON);
+
+            // 1ms 걸음은 몇 px 안쪽이어야 한다. 시작점만 옮기면 곡선과 화면의 차이(약 40px)만큼 한 번에 튄다.
+            Scroller.UpdateTween(0.001f);
+            Assert.AreEqual(after, Scroller.ScrollPosition, 5f, "재배치 다음 걸음에 화면이 튀면 안 된다");
+
+            Scroller.UpdateTween(1f);
+            Assert.AreEqual(1, completed);
+            Assert.AreEqual(100 * 120f, Scroller.ScrollPosition, FAR_POSITION_EPSILON);
+        }
+
+        [UnityTest]
+        public IEnumerator ReloadDataKeepingPosition_DuringTween_ContinuesFromShiftedStart()
+        {
+            const float TWEEN_TIME = 1f;
+            const float TARGET = 6000f;
+            const float GROWTH = 500f;
+            _fixture = ScrollerFixture.Create(ScrollDirection.Vertical, TestDelegate.Uniform(1000, 100f));
+            int completed = 0;
+            Scroller.JumpToDataIndex(60, 0f, 0f, false, TweenType.Linear, TWEEN_TIME, () => completed++);
+
+            // 키울 셀 0~4(끝 500)가 뷰포트보다 앞에 있을 때까지 간다.
+            yield return WaitFor(() => Scroller.ScrollPosition > 1000f, 2f);
+            Assert.IsTrue(Scroller.IsTweening);
+
+            // 0 → 6000 선형 트윈이므로 지금 위치로 진행률을 안다.
+            float before = Scroller.ScrollPosition;
+            float progress = before / TARGET;
+            for (int i = 0; i < 5; i++)
+            {
+                _fixture.Delegate.Sizes[i] = 200f;
+            }
+
+            Scroller.ReloadDataKeepingPosition();
+            Assert.AreEqual(before + GROWTH, Scroller.ScrollPosition, EPSILON, "맨 앞 셀 기준으로 같은 화면이어야 한다");
+            Assert.IsTrue(Scroller.IsTweening, "데이터를 다시 받아도 트윈을 끝내지 않는다");
+
+            // 목표(60번)도 500 밀렸으므로 다음 프레임은 500 → 6500 직선 위에 있어야 한다.
+            // 시작점을 옮기지 않으면 500 × (1 − 진행률)만큼 뒤로 튄다.
+            float nextProgress = Mathf.Min(1f, progress + Time.unscaledDeltaTime / TWEEN_TIME);
+            float expectedNext = Mathf.LerpUnclamped(GROWTH, TARGET + GROWTH, nextProgress);
+            yield return null;
+            Assert.AreEqual(expectedNext, Scroller.ScrollPosition, 1f, "트윈 시작점도 같은 만큼 옮겨져야 한다");
+
+            yield return WaitFor(() => completed > 0, 3f);
+            Assert.AreEqual(1, completed);
+            Assert.AreEqual(TARGET + GROWTH, Scroller.ScrollPosition, EPSILON);
+            Assert.AreEqual(60, Scroller.StartDataIndex);
+        }
+
+        [UnityTest]
+        public IEnumerator Shrink_DuringTween_ContinuesToClampedIndex()
+        {
+            _fixture = ScrollerFixture.Create(ScrollDirection.Vertical, TestDelegate.Uniform(100, 100f));
+            int completed = 0;
+            Scroller.JumpToDataIndex(90, 0f, 0f, false, TweenType.Linear, 1f, () => completed++);
+            yield return null;
+            Assert.IsTrue(Scroller.IsTweening);
+
+            // 50개로 줄이고 마지막 셀(49번, 4900~5900)을 뷰포트보다 크게 둔다. 49번 시작(4900)이 스크롤 끝(5500)보다 앞이므로
+            // 잘린 인덱스로 가야만 4900에서 끝난다 (90번을 그대로 쓰면 다른 위치가 스크롤 끝으로 잘린다).
+            float[] sizes = TestDelegate.Uniform(50, 100f);
+            sizes[49] = 1000f;
+            _fixture.Delegate.Sizes = sizes;
+            Scroller.ReloadDataKeepingPosition();
+            Assert.IsTrue(Scroller.IsTweening, "개수가 줄어도 잘린 인덱스를 향해 계속 간다");
+            Assert.AreEqual(5500f, Scroller.ScrollSize, EPSILON);
+
+            yield return WaitFor(() => completed > 0, 3f);
+
+            Assert.AreEqual(1, completed);
+            Assert.AreEqual(4900f, Scroller.ScrollPosition, EPSILON);
+            Assert.AreEqual(49, Scroller.StartDataIndex);
+        }
+
+        [Test]
+        public void Loop_ShrinkDuringForwardTween_ContinuesToClampedIndex()
+        {
+            // 시작 2000 (가운데 세트), 사이클 1000
+            _fixture = ScrollerFixture.Create(ScrollDirection.Vertical, TestDelegate.Uniform(10, 100f), loop: true);
+            int completed = 0;
+
+            // 8번의 뒤쪽(Forward) 사본(슬롯 28, 2800)으로 간다.
+            Scroller.JumpToDataIndex(8, 0f, 0f, false, TweenType.Linear, 1f, () => completed++, LoopJumpDirection.Forward);
+            Scroller.UpdateTween(0.1f);
+
+            // 5개로 줄이면 8번은 4번으로 잘리고, 맨 앞 셀(0번)과 같은 세트의 4번(앞으로 가는 쪽 사본)으로 가야 한다.
+            // 잘리지 않은 8을 슬롯 번호에 쓰면 세트가 넘어가 다른 데이터(3번)에 멈춘다.
+            _fixture.Delegate.Sizes = TestDelegate.Uniform(5, 100f);
+            Scroller.ReloadDataKeepingPosition();
+            Assert.IsTrue(Scroller.IsTweening);
+
+            float previous = Scroller.ScrollPosition;
+            for (int i = 0; i < 100 && Scroller.IsTweening; i++)
+            {
+                Scroller.UpdateTween(0.05f);
+                if (Scroller.IsTweening)
+                {
+                    Assert.GreaterOrEqual(Scroller.ScrollPosition, previous - EPSILON, "줄어든 뒤에도 앞으로만 가야 한다");
+                    previous = Scroller.ScrollPosition;
+                }
+            }
+
+            Assert.AreEqual(1, completed);
+            int slot = Scroller.GetCellViewIndexAtPosition(Scroller.ScrollPosition + 1f);
+            Assert.AreEqual(4, Scroller.GetDataIndexForCellViewIndex(slot), "잘린 인덱스(4번) 시작이 뷰포트 맨 앞이어야 한다");
+            Assert.AreEqual(Scroller.GetScrollPositionForCellViewIndex(slot), Scroller.ScrollPosition, EPSILON);
+        }
+
+        [UnityTest]
+        public IEnumerator Emptied_DuringTween_CompletesOnce()
+        {
+            _fixture = ScrollerFixture.Create(ScrollDirection.Vertical, TestDelegate.Uniform(100, 100f));
             int completed = 0;
             Scroller.JumpToDataIndex(50, 0f, 0f, false, TweenType.Linear, 1f, () => completed++);
             yield return null;
 
-            Scroller.Spacing = 10f;
+            _fixture.Delegate.Sizes = new float[0];
+            Scroller.ReloadDataKeepingPosition();
 
-            Assert.AreEqual(1, completed, "재배치가 점프를 끝내도 완료 콜백은 한 번 불려야 한다");
+            Assert.AreEqual(1, completed, "갈 셀이 없어지면 빈 목록 점프처럼 바로 완료한다");
             Assert.IsFalse(Scroller.IsTweening);
-            Assert.AreEqual(50 * 110f, Scroller.ScrollPosition, EPSILON);
+            Assert.AreEqual(0f, Scroller.ScrollPosition, EPSILON);
+
+            yield return null;
+            yield return null;
+            Assert.AreEqual(1, completed);
+        }
+
+        [UnityTest]
+        public IEnumerator ViewportResize_DuringTween_EndsAtNewTarget()
+        {
+            _fixture = ScrollerFixture.Create(ScrollDirection.Vertical, TestDelegate.Uniform(1000, 100f));
+            int completed = 0;
+            Scroller.JumpToDataIndex(50, 0.5f, 0.5f, false, TweenType.Linear, 1f, () => completed++);
+            yield return null;
+            Assert.IsTrue(Scroller.IsTweening);
+
+            ((RectTransform)_fixture.ScrollRect.transform).sizeDelta = new Vector2(ScrollerFixture.VIEWPORT_WIDTH, 600f);
+            yield return WaitFor(() => completed > 0, 3f);
+
+            Assert.AreEqual(1, completed);
+            Assert.AreEqual(5050f - 300f, Scroller.ScrollPosition, EPSILON, "가운데 정렬 목표를 새 뷰포트로 다시 계산해야 한다");
+        }
+
+        [UnityTest]
+        public IEnumerator Relayout_DuringSnapTween_StillSnapsOnce()
+        {
+            _fixture = ScrollerFixture.Create(ScrollDirection.Vertical, TestDelegate.Uniform(100, 100f));
+            Scroller.SnapTweenType = TweenType.Linear;
+            Scroller.SnapTweenTime = 1f;
+            int snapped = 0;
+            int snappedData = -1;
+            Scroller.ScrollerSnapped += (_, __, dataIndex, ___) =>
+            {
+                snapped++;
+                snappedData = dataIndex;
+            };
+
+            // 뷰포트 가운데(1430)에 가장 가까운 14번을 가운데로
+            Scroller.ScrollPosition = 1230f;
+            Scroller.Snap();
+            yield return null;
+            Assert.IsTrue(Scroller.IsTweening);
+
+            Scroller.Spacing = 10f;
+            Assert.IsTrue(Scroller.IsTweening);
+
+            yield return WaitFor(() => snapped > 0, 3f);
+            Assert.AreEqual(1, snapped);
+            Assert.AreEqual(14, snappedData);
+            Assert.AreEqual(14 * 110f + 50f - 200f, Scroller.ScrollPosition, EPSILON);
+
+            yield return null;
+            Assert.AreEqual(1, snapped);
+        }
+
+        [UnityTest]
+        public IEnumerator Loop_RelayoutDuringForwardTween_KeepsDirection()
+        {
+            _fixture = ScrollerFixture.Create(ScrollDirection.Vertical, TestDelegate.Uniform(10, 100f), loop: true);
+            Scroller.ScrollPosition = 2400f;
+            int completed = 0;
+
+            // 2번의 뒤쪽(Forward) 사본(슬롯 32, 목표 3200)으로 간다.
+            Scroller.JumpToDataIndex(2, 0f, 0f, false, TweenType.Linear, 1f, () => completed++, LoopJumpDirection.Forward);
+            yield return null;
+            Assert.IsTrue(Scroller.IsTweening);
+
+            // 사이클이 1100이 된다. 맨 앞 셀 기준 사본 관계를 지키지 않으면 가운데 세트 사본(뒤쪽)으로 돌아간다.
+            float previous = Scroller.ScrollPosition;
+            Scroller.Spacing = 10f;
+            Assert.GreaterOrEqual(Scroller.ScrollPosition, previous - EPSILON);
+            previous = Scroller.ScrollPosition;
+
+            float timeout = 3f;
+            while (completed == 0 && timeout > 0f)
+            {
+                timeout -= Time.unscaledDeltaTime;
+                yield return null;
+                if (Scroller.IsTweening)
+                {
+                    Assert.GreaterOrEqual(Scroller.ScrollPosition, previous - EPSILON, "재배치 뒤에도 앞으로만 가야 한다");
+                    previous = Scroller.ScrollPosition;
+                }
+            }
+
+            Assert.AreEqual(1, completed);
+            int slot = Scroller.GetCellViewIndexAtPosition(Scroller.ScrollPosition + 1f);
+            Assert.AreEqual(2, Scroller.GetDataIndexForCellViewIndex(slot), "새 배치에서 2번 시작이 뷰포트 맨 앞이어야 한다");
+            Assert.AreEqual(Scroller.GetScrollPositionForCellViewIndex(slot), Scroller.ScrollPosition, EPSILON);
         }
 
         [UnityTest]
@@ -423,6 +892,418 @@ namespace CyKim.Scroller.Tests
             Assert.IsFalse(completed);
             Assert.IsFalse(Scroller.IsTweening);
             Assert.Less(Scroller.ScrollPosition, 30000f);
+        }
+
+        #endregion
+
+        #region Scroll Into View
+
+        [Test]
+        public void ScrollIntoView_Nearest_AlreadyVisible_KeepsPositionAndCompletesImmediately()
+        {
+            _fixture = ScrollerFixture.Create(ScrollDirection.Vertical, TestDelegate.Uniform(1000, 100f));
+            Scroller.ScrollPosition = 1000f;
+            int completed = 0;
+
+            // 뷰포트 [1000, 1400]: 10번은 시작에, 13번은 끝에 정확히 맞닿아 있다.
+            Scroller.ScrollIntoView(10, onComplete: () => completed++);
+            Scroller.ScrollIntoView(13, onComplete: () => completed++);
+            Scroller.ScrollIntoView(11, ScrollAlign.Nearest, 0f, TweenType.Linear, 0.5f, () => completed++);
+
+            Assert.AreEqual(3, completed);
+            Assert.IsFalse(Scroller.IsTweening, "움직일 필요가 없으면 트윈도 시작하지 않는다");
+            Assert.AreEqual(1000f, Scroller.ScrollPosition, EPSILON);
+        }
+
+        [Test]
+        public void ScrollIntoView_Nearest_AboveAlignsStartAndBelowAlignsEnd()
+        {
+            _fixture = ScrollerFixture.Create(ScrollDirection.Vertical, TestDelegate.Uniform(1000, 100f));
+
+            Scroller.ScrollPosition = 1000f;
+            Scroller.ScrollIntoView(5);
+            Assert.AreEqual(500f, Scroller.ScrollPosition, EPSILON, "위쪽 셀은 시작을 뷰포트 시작에");
+
+            Scroller.ScrollPosition = 1000f;
+            Scroller.ScrollIntoView(20);
+            Assert.AreEqual(2100f - 400f, Scroller.ScrollPosition, EPSILON, "아래쪽 셀은 끝을 뷰포트 끝에");
+
+            // 뷰포트 [1030, 1430]에 걸친 셀: 앞쪽이 잘린 10번은 Start, 뒤쪽이 잘린 14번은 End
+            Scroller.ScrollPosition = 1030f;
+            Scroller.ScrollIntoView(10);
+            Assert.AreEqual(1000f, Scroller.ScrollPosition, EPSILON);
+
+            Scroller.ScrollPosition = 1030f;
+            Scroller.ScrollIntoView(14);
+            Assert.AreEqual(1500f - 400f, Scroller.ScrollPosition, EPSILON);
+        }
+
+        [Test]
+        public void ScrollIntoView_Nearest_MarginKeepsGap()
+        {
+            _fixture = ScrollerFixture.Create(ScrollDirection.Vertical, TestDelegate.Uniform(1000, 100f));
+            Scroller.ScrollPosition = 1000f;
+
+            // 10번은 여백 없이는 보이지만, 앞에 20을 남기려면 20 더 앞으로 가야 한다.
+            Scroller.ScrollIntoView(10, margin: 20f);
+            Assert.AreEqual(980f, Scroller.ScrollPosition, EPSILON);
+
+            // 뷰포트 [980, 1380]: 13번(1300~1400) 뒤에 20을 남기려면 End로 1420 − 400
+            Scroller.ScrollIntoView(13, margin: 20f);
+            Assert.AreEqual(1020f, Scroller.ScrollPosition, EPSILON);
+            Assert.IsTrue(Scroller.IsDataIndexFullyVisible(13, 20f));
+            Assert.IsFalse(Scroller.IsDataIndexFullyVisible(10, 20f));
+
+            Scroller.ScrollIntoView(13, margin: 20f);
+            Assert.AreEqual(1020f, Scroller.ScrollPosition, EPSILON, "이미 여백까지 보이면 움직이지 않는다");
+        }
+
+        [Test]
+        public void ScrollIntoView_Nearest_CellLargerThanViewportAlignsStart()
+        {
+            float[] sizes = TestDelegate.Uniform(40, 100f);
+            sizes[10] = 600f;   // 1000~1600
+            sizes[20] = 380f;   // 2500~2880
+            _fixture = ScrollerFixture.Create(ScrollDirection.Vertical, sizes);
+
+            Scroller.ScrollIntoView(10);
+            Assert.AreEqual(1000f, Scroller.ScrollPosition, EPSILON, "아래쪽에 있어도 뷰포트보다 크면 Start");
+
+            Scroller.ScrollPosition = 3000f;
+            Scroller.ScrollIntoView(10);
+            Assert.AreEqual(1000f, Scroller.ScrollPosition, EPSILON);
+
+            Scroller.ScrollIntoView(10, margin: 20f);
+            Assert.AreEqual(980f, Scroller.ScrollPosition, EPSILON);
+
+            // 380 + 여백 20 × 2 = 420 > 400
+            Scroller.ScrollPosition = 0f;
+            Scroller.ScrollIntoView(20, margin: 20f);
+            Assert.AreEqual(2480f, Scroller.ScrollPosition, EPSILON, "여백까지 합쳐 뷰포트보다 크면 Start");
+        }
+
+        [Test]
+        public void ScrollIntoView_StartCenterEnd_AlignWithPaddingAndSpacing()
+        {
+            _fixture = ScrollerFixture.Create(ScrollDirection.Vertical, TestDelegate.Uniform(100, 100f), false, 10f,
+                new RectOffset(0, 0, 30, 0));
+
+            // 20번: 30 + 20 × 110 = 2230 ~ 2330
+            Scroller.ScrollIntoView(20, ScrollAlign.Start, 15f);
+            Assert.AreEqual(2230f - 15f, Scroller.ScrollPosition, EPSILON);
+
+            Scroller.ScrollIntoView(20, ScrollAlign.Center, 15f);
+            Assert.AreEqual(2230f + 50f - 200f, Scroller.ScrollPosition, EPSILON, "Center는 여백을 쓰지 않는다");
+
+            Scroller.ScrollIntoView(20, ScrollAlign.End, 15f);
+            Assert.AreEqual(2330f + 15f - 400f, Scroller.ScrollPosition, EPSILON);
+            Assert.IsTrue(Scroller.IsDataIndexFullyVisible(20, 15f));
+
+            // 목표는 스크롤 범위로 잘린다.
+            Scroller.ScrollIntoView(0, ScrollAlign.Start, 50f);
+            Assert.AreEqual(0f, Scroller.ScrollPosition, EPSILON);
+        }
+
+        [UnityTest]
+        public IEnumerator ScrollIntoView_End_AlignmentSurvivesViewportResize()
+        {
+            _fixture = ScrollerFixture.Create(ScrollDirection.Vertical, TestDelegate.Uniform(1000, 100f));
+            Scroller.ScrollIntoView(30, ScrollAlign.End, 15f);
+            Assert.AreEqual(3100f + 15f - 400f, Scroller.ScrollPosition, EPSILON);
+
+            ((RectTransform)_fixture.ScrollRect.transform).sizeDelta = new Vector2(ScrollerFixture.VIEWPORT_WIDTH, 600f);
+            yield return null;
+            yield return null;
+
+            Assert.AreEqual(3100f + 15f - 600f, Scroller.ScrollPosition, EPSILON, "끝 정렬과 여백이 새 뷰포트 기준으로 유지돼야 한다");
+        }
+
+        [Test]
+        public void ScrollIntoView_Horizontal_UsesWidth()
+        {
+            _fixture = ScrollerFixture.Create(ScrollDirection.Horizontal, TestDelegate.Uniform(100, 100f));
+
+            // 뷰포트 너비 300. 오른쪽 셀은 End: 1100 − 300
+            Scroller.ScrollIntoView(10);
+            Assert.AreEqual(800f, Scroller.ScrollPosition, EPSILON);
+            Assert.AreEqual(-800f, _fixture.Content.anchoredPosition.x, EPSILON);
+            Assert.IsTrue(Scroller.IsDataIndexFullyVisible(8));
+            Assert.IsTrue(Scroller.IsDataIndexFullyVisible(10));
+            Assert.IsFalse(Scroller.IsDataIndexFullyVisible(7));
+
+            Scroller.ScrollIntoView(5);
+            Assert.AreEqual(500f, Scroller.ScrollPosition, EPSILON, "왼쪽 셀은 Start");
+
+            Scroller.ScrollIntoView(6);
+            Assert.AreEqual(500f, Scroller.ScrollPosition, EPSILON);
+
+            Scroller.ScrollIntoView(20, ScrollAlign.Center);
+            Assert.AreEqual(2050f - 150f, Scroller.ScrollPosition, EPSILON);
+        }
+
+        [Test]
+        public void ScrollIntoView_Loop_VisibleCopyStaysOtherwisePicksNearestCopy()
+        {
+            // 시작 2000 (가운데 세트), 순환 보정 창 1500~2500, 사이클 1000
+            _fixture = ScrollerFixture.Create(ScrollDirection.Vertical, TestDelegate.Uniform(10, 100f), loop: true);
+            int completed = 0;
+
+            Scroller.ScrollIntoView(2, onComplete: () => completed++);
+            Assert.AreEqual(1, completed);
+            Assert.AreEqual(2000f, Scroller.ScrollPosition, EPSILON, "사본(2200~2300)이 보이므로 움직이지 않는다");
+
+            // 8번: 앞 사본 1800~1900의 Start(1800, 200 이동)가 뒤 사본 2800~2900의 End(2500, 500 이동)보다 가깝다.
+            Scroller.ScrollIntoView(8);
+            Assert.AreEqual(1800f, Scroller.ScrollPosition, EPSILON);
+            int frontSlot = Scroller.GetCellViewIndexAtPosition(Scroller.ScrollPosition + 1f);
+            Assert.AreEqual(8, Scroller.GetDataIndexForCellViewIndex(frontSlot), "앞쪽 사본의 시작이 뷰포트 맨 앞이어야 한다");
+            Assert.IsTrue(Scroller.IsDataIndexFullyVisible(8));
+            Scroller.ScrollPosition = 2000f;
+
+            // 5번: 앞 사본 Start(1500, 500 이동)보다 뒤 사본 2500~2600의 End(2200, 200 이동)가 가깝다.
+            Scroller.ScrollIntoView(5);
+            Assert.AreEqual(2200f, Scroller.ScrollPosition, EPSILON);
+            Assert.IsTrue(Scroller.IsDataIndexFullyVisible(5));
+
+            // Backward: 9번 앞 사본(1900~2000)을 Start로
+            Scroller.ScrollIntoView(9, loopJumpDirection: LoopJumpDirection.Backward);
+            Assert.AreEqual(1900f, Scroller.ScrollPosition, EPSILON);
+            int slot = Scroller.GetCellViewIndexAtPosition(Scroller.ScrollPosition + 1f);
+            Assert.AreEqual(9, Scroller.GetDataIndexForCellViewIndex(slot));
+
+            // 뷰포트 [1900, 2300]: 어느 사본이든 완전히 보이면 true
+            Assert.IsTrue(Scroller.IsDataIndexFullyVisible(0));
+            Assert.IsTrue(Scroller.IsDataIndexFullyVisible(2));
+            Assert.IsFalse(Scroller.IsDataIndexFullyVisible(3));
+
+            // Forward: 7번 뒤 사본(2700~2800)을 End로
+            Scroller.ScrollIntoView(7, loopJumpDirection: LoopJumpDirection.Forward);
+            Assert.AreEqual(2400f, Scroller.ScrollPosition, EPSILON);
+            Assert.IsTrue(Scroller.IsDataIndexFullyVisible(7));
+        }
+
+        [Test]
+        public void ScrollIntoView_ClampsIndex()
+        {
+            _fixture = ScrollerFixture.Create(ScrollDirection.Vertical, TestDelegate.Uniform(100, 100f));
+
+            Scroller.ScrollIntoView(500);
+            Assert.AreEqual(9600f, Scroller.ScrollPosition, EPSILON, "99번으로 잘려 End");
+            Assert.AreEqual(Scroller.ScrollSize, Scroller.ScrollPosition, EPSILON);
+
+            Scroller.ScrollIntoView(-5);
+            Assert.AreEqual(0f, Scroller.ScrollPosition, EPSILON, "0번으로 잘려 Start");
+        }
+
+        [Test]
+        public void EmptyList_ScrollIntoViewCompletesAndQueriesReturnDefaults()
+        {
+            _fixture = ScrollerFixture.Create(ScrollDirection.Vertical, new float[0]);
+
+            bool completed = false;
+            Scroller.ScrollIntoView(3, ScrollAlign.Center, 0f, TweenType.Linear, 0.5f, () => completed = true);
+            Assert.IsTrue(completed);
+            Assert.IsFalse(Scroller.IsTweening);
+            Assert.IsFalse(Scroller.IsDataIndexFullyVisible(0));
+            Assert.AreEqual(0f, Scroller.GetCellStart(0), EPSILON);
+            Assert.AreEqual(0f, Scroller.GetCellSize(0), EPSILON);
+        }
+
+        [UnityTest]
+        public IEnumerator ScrollIntoView_Tween_CompletesOnceAtTarget()
+        {
+            _fixture = ScrollerFixture.Create(ScrollDirection.Vertical, TestDelegate.Uniform(1000, 100f));
+            int completed = 0;
+
+            Scroller.ScrollIntoView(30, ScrollAlign.Nearest, 10f, TweenType.EaseInOutCubic, 0.3f, () => completed++);
+            Assert.IsTrue(Scroller.IsTweening);
+            Assert.AreEqual(0, completed);
+
+            yield return WaitFor(() => completed > 0, 2f);
+            Assert.AreEqual(1, completed);
+            Assert.IsFalse(Scroller.IsTweening);
+            Assert.AreEqual(3100f + 10f - 400f, Scroller.ScrollPosition, EPSILON);
+            Assert.IsTrue(Scroller.IsDataIndexFullyVisible(30, 10f));
+
+            yield return null;
+            yield return null;
+            Assert.AreEqual(1, completed);
+        }
+
+        [UnityTest]
+        public IEnumerator ScrollIntoView_NearestVisibleDuringTween_StopsTween()
+        {
+            _fixture = ScrollerFixture.Create(ScrollDirection.Vertical, TestDelegate.Uniform(1000, 100f));
+            bool jumpCompleted = false;
+            Scroller.JumpToDataIndex(300, 0f, 0f, false, TweenType.Linear, 1f, () => jumpCompleted = true);
+            yield return null;
+            Assert.IsTrue(Scroller.IsTweening);
+
+            // 시작이 뷰포트 안에 있는 첫 셀은 완전히 보인다.
+            float position = Scroller.ScrollPosition;
+            int visible = Mathf.CeilToInt(position / 100f);
+            int completed = 0;
+            Scroller.ScrollIntoView(visible, onComplete: () => completed++);
+
+            Assert.AreEqual(1, completed);
+            Assert.IsFalse(Scroller.IsTweening, "이미 보이면 진행 중인 트윈을 그 자리에서 멈춘다");
+
+            yield return null;
+            yield return null;
+            Assert.AreEqual(position, Scroller.ScrollPosition, EPSILON);
+            Assert.IsFalse(jumpCompleted, "대신된 점프의 완료 콜백은 부르지 않는다");
+        }
+
+        [Test]
+        public void ScrollIntoView_DuringDrag_EndsDragOnlyWhenMoving()
+        {
+            _fixture = ScrollerFixture.Create(ScrollDirection.Vertical, TestDelegate.Uniform(100, 100f));
+            GameObject target = _fixture.ScrollRect.gameObject;
+            var eventData = new PointerEventData(null) { button = PointerEventData.InputButton.Left };
+            ExecuteEvents.Execute(target, eventData, ExecuteEvents.beginDragHandler);
+            Assert.IsTrue(Scroller.IsDragging);
+
+            Scroller.ScrollIntoView(2);
+            Assert.IsTrue(Scroller.IsDragging, "움직이지 않으면 드래그를 끝내지 않는다");
+
+            Scroller.ScrollIntoView(50);
+            Assert.IsFalse(Scroller.IsDragging);
+            Assert.AreEqual(5100f - 400f, Scroller.ScrollPosition, EPSILON);
+
+            ExecuteEvents.Execute(target, eventData, ExecuteEvents.dragHandler);
+            Assert.AreEqual(4700f, Scroller.ScrollPosition, EPSILON, "남은 드래그 이벤트가 이동을 되돌리면 안 된다");
+        }
+
+        [Test]
+        public void ScrollIntoView_NearestEdgeCellMargin_KeepsDragAndInertia()
+        {
+            // 앞뒤 여백 0: 첫·마지막 셀 바깥에는 여백 8을 둘 콘텐츠가 없다. 콘텐츠 끝까지 보이면 보이는 것이다.
+            _fixture = ScrollerFixture.Create(ScrollDirection.Vertical, TestDelegate.Uniform(100, 100f));
+            GameObject target = _fixture.ScrollRect.gameObject;
+            var eventData = new PointerEventData(null) { button = PointerEventData.InputButton.Left };
+            int completed = 0;
+
+            Assert.IsTrue(Scroller.IsDataIndexFullyVisible(0, 8f));
+            ExecuteEvents.Execute(target, eventData, ExecuteEvents.beginDragHandler);
+            Scroller.ScrollIntoView(0, margin: 8f, onComplete: () => completed++);
+            Assert.IsTrue(Scroller.IsDragging, "맨 위에서 움직이지 않으면 드래그를 끝내지 않는다");
+            Assert.AreEqual(1, completed);
+            Assert.AreEqual(0f, Scroller.ScrollPosition, EPSILON);
+            ExecuteEvents.Execute(target, eventData, ExecuteEvents.endDragHandler);
+
+            Scroller.ScrollPosition = Scroller.ScrollSize;   // 뷰포트 [9600, 10000]
+            Assert.IsTrue(Scroller.IsDataIndexFullyVisible(99, 8f));
+            Assert.IsFalse(Scroller.IsDataIndexFullyVisible(96, 8f), "앞에 콘텐츠가 있는 셀은 여백까지 보여야 한다");
+            ExecuteEvents.Execute(target, eventData, ExecuteEvents.beginDragHandler);
+            Scroller.ScrollIntoView(99, margin: 8f, onComplete: () => completed++);
+            Assert.IsTrue(Scroller.IsDragging, "맨 아래에서 움직이지 않으면 드래그를 끝내지 않는다");
+            Assert.AreEqual(2, completed);
+            ExecuteEvents.Execute(target, eventData, ExecuteEvents.endDragHandler);
+
+            Scroller.LinearVelocity = -300f;
+            Scroller.ScrollIntoView(99, margin: 8f, onComplete: () => completed++);
+            Assert.AreEqual(-300f, Scroller.LinearVelocity, EPSILON, "움직이지 않으면 관성을 멈추지 않는다");
+            Assert.AreEqual(3, completed);
+            Assert.AreEqual(Scroller.ScrollSize, Scroller.ScrollPosition, EPSILON);
+        }
+
+        [Test]
+        public void ScrollIntoView_NearestLargeCellAlreadyAtStart_KeepsDrag()
+        {
+            float[] sizes = TestDelegate.Uniform(40, 100f);
+            sizes[10] = 600f;   // 1000~1600, 뷰포트(400)보다 크다
+            _fixture = ScrollerFixture.Create(ScrollDirection.Vertical, sizes);
+            GameObject target = _fixture.ScrollRect.gameObject;
+            var eventData = new PointerEventData(null) { button = PointerEventData.InputButton.Left };
+            int completed = 0;
+
+            // 이미 시작에 맞춰져 있으면 Nearest(Start) 목표가 지금 위치라 움직일 것이 없다.
+            Scroller.ScrollPosition = 1000f;
+            ExecuteEvents.Execute(target, eventData, ExecuteEvents.beginDragHandler);
+            Scroller.ScrollIntoView(10, onComplete: () => completed++);
+            Assert.IsTrue(Scroller.IsDragging, "움직일 것이 없으면 드래그를 끝내지 않는다");
+            Assert.AreEqual(1, completed);
+            Assert.AreEqual(1000f, Scroller.ScrollPosition, EPSILON);
+            ExecuteEvents.Execute(target, eventData, ExecuteEvents.endDragHandler);
+
+            // 셀 안쪽을 보고 있으면 시작으로 옮기고 드래그를 끝낸다.
+            Scroller.ScrollPosition = 1100f;
+            ExecuteEvents.Execute(target, eventData, ExecuteEvents.beginDragHandler);
+            Scroller.ScrollIntoView(10, onComplete: () => completed++);
+            Assert.IsFalse(Scroller.IsDragging);
+            Assert.AreEqual(2, completed);
+            Assert.AreEqual(1000f, Scroller.ScrollPosition, EPSILON);
+        }
+
+        [Test]
+        public void IsDataIndexFullyVisible_ExcludesLookAheadAndHonorsMargin()
+        {
+            _fixture = ScrollerFixture.Create(ScrollDirection.Vertical, TestDelegate.Uniform(1000, 100f));
+            Scroller.LookAheadBefore = 150f;
+            Scroller.LookAheadAfter = 150f;
+            Scroller.ScrollPosition = 1000f;   // 뷰포트 [1000, 1400]
+
+            Assert.IsTrue(Scroller.IsDataIndexFullyVisible(10), "시작이 뷰포트 시작에 정확히 맞닿으면 보인다");
+            Assert.IsTrue(Scroller.IsDataIndexFullyVisible(13), "끝이 뷰포트 끝에 정확히 맞닿으면 보인다");
+            Assert.IsFalse(Scroller.IsDataIndexFullyVisible(9));
+            Assert.IsFalse(Scroller.IsDataIndexFullyVisible(14));
+
+            // lookAhead 구간 셀은 활성이어도 보이는 것이 아니다.
+            Assert.IsNotNull(Scroller.GetCellViewAtDataIndex(9));
+            Assert.IsNotNull(Scroller.GetCellViewAtDataIndex(14));
+
+            Assert.IsFalse(Scroller.IsDataIndexFullyVisible(10, 1f));
+            Assert.IsTrue(Scroller.IsDataIndexFullyVisible(11, 100f), "[1000, 1300]");
+            Assert.IsFalse(Scroller.IsDataIndexFullyVisible(11, 101f));
+            Assert.IsTrue(Scroller.IsDataIndexFullyVisible(12, 100f), "[1100, 1400]");
+
+            Scroller.ScrollPosition = 1050f;   // 뷰포트 [1050, 1450]
+            Assert.IsFalse(Scroller.IsDataIndexFullyVisible(10), "앞쪽이 잘린 셀");
+            Assert.IsFalse(Scroller.IsDataIndexFullyVisible(14), "뒤쪽이 잘린 셀");
+            Assert.IsTrue(Scroller.IsDataIndexFullyVisible(11));
+            Assert.IsFalse(Scroller.IsDataIndexFullyVisible(-1));
+            Assert.IsFalse(Scroller.IsDataIndexFullyVisible(1000));
+        }
+
+        [Test]
+        public void GetCellStartAndSize_IncludePaddingAndSpacing()
+        {
+            float[] sizes = { 50f, 150f, 50f, 150f, 50f, 150f, 50f, 150f, 50f, 150f };
+            _fixture = ScrollerFixture.Create(ScrollDirection.Vertical, sizes, false, 5f, new RectOffset(10, 20, 30, 40));
+
+            // 시작: 30, 85, 240, 295, 450, 505, 660, 715, 870, 925
+            Assert.AreEqual(30f, Scroller.GetCellStart(0), EPSILON);
+            Assert.AreEqual(240f, Scroller.GetCellStart(2), EPSILON);
+            Assert.AreEqual(925f, Scroller.GetCellStart(9), EPSILON);
+            Assert.AreEqual(150f, Scroller.GetCellSize(1), EPSILON);
+            Assert.AreEqual(50f, Scroller.GetCellSize(2), EPSILON);
+
+            Assert.AreEqual(30f, Scroller.GetCellStart(-3), EPSILON, "범위 밖은 잘린다");
+            Assert.AreEqual(925f, Scroller.GetCellStart(99), EPSILON);
+            Assert.AreEqual(150f, Scroller.GetCellSize(99), EPSILON);
+            Assert.AreEqual(Scroller.GetScrollPositionForDataIndex(4), Scroller.GetCellStart(4), EPSILON);
+        }
+
+        [Test]
+        public void GetCellStart_Loop_UsesMiddleSetCopy()
+        {
+            _fixture = ScrollerFixture.Create(ScrollDirection.Vertical, TestDelegate.Uniform(10, 100f), loop: true,
+                padding: new RectOffset(0, 0, 30, 0));
+
+            Assert.AreEqual(5, Scroller.Layout.SetCount);
+            Assert.AreEqual(30f + 2 * 1000f + 300f, Scroller.GetCellStart(3), EPSILON);
+            Assert.AreEqual(100f, Scroller.GetCellSize(3), EPSILON);
+            Assert.AreEqual(Scroller.GetScrollPositionForDataIndex(3), Scroller.GetCellStart(3), EPSILON);
+        }
+
+        /// <summary>condition이 참이 되거나 timeout(초, unscaled)이 지날 때까지 프레임을 넘긴다.</summary>
+        private static IEnumerator WaitFor(System.Func<bool> condition, float timeout)
+        {
+            while (!condition() && timeout > 0f)
+            {
+                timeout -= Time.unscaledDeltaTime;
+                yield return null;
+            }
         }
 
         #endregion
@@ -1085,6 +1966,11 @@ namespace CyKim.Scroller.Tests
             // 0 → 3000 선형 트윈이므로 지금 위치로 진행률을 안다.
             float before = Scroller.ScrollPosition;
             float progress = before / TWEEN_TARGET;
+
+            // ShiftScrollPosition의 계약대로 레이아웃 좌표를 먼저 SHIFT만큼 민다 (앞 여백이 늘어난 것과 같다).
+            // 트윈 목표는 요청(슬롯)으로 매 프레임 지금 레이아웃에서 다시 계산하므로 레이아웃이 밀려야 목표도 따라온다.
+            CyScrollerLayout layout = Scroller.Layout;
+            layout.Build(layout.Spacing, layout.PaddingBefore + SHIFT, layout.PaddingAfter, false, Scroller.ScrollRectSize);
             Scroller.ShiftScrollPosition(SHIFT);
             Assert.AreEqual(before + SHIFT, Scroller.ScrollPosition, EPSILON, "옮긴 만큼만 움직여야 한다");
             Assert.IsTrue(Scroller.IsTweening, "좌표 이동은 트윈을 끊지 않는다");
@@ -1363,6 +2249,45 @@ namespace CyKim.Scroller.Tests
                     Scroller.ScrollPosition = position;
                 }
             }, UnityEngine.TestTools.Constraints.Is.Not.AllocatingGCMemory());
+        }
+
+        // 트윈을 프레임 대신 직접 진행시키는 간격과 상한.
+        private const float TWEEN_STEP = 0.01f;
+        private const int MAX_TWEEN_STEPS = 1000;
+
+        [Test]
+        public void TweenUpdate_DoesNotAllocateAfterWarmup()
+        {
+            _fixture = ScrollerFixture.Create(ScrollDirection.Vertical, TestDelegate.Uniform(2000, 37f), false, 3f);
+            Scroller.LookAheadAfter = 100f;
+
+            // 같은 경로로 풀과 내부 리스트 용량을 채운다.
+            RunIntoViewTween();
+            Scroller.ScrollPosition = 0f;
+
+            int steps = 0;
+            Assert.That(() => { steps = RunIntoViewTween(); }, UnityEngine.TestTools.Constraints.Is.Not.AllocatingGCMemory());
+
+            // 매 걸음 목표를 요청에서 다시 계산하고, 끝에서 완료 처리까지 한다.
+            Assert.Greater(steps, 10);
+            Assert.IsFalse(Scroller.IsTweening);
+            Assert.AreEqual(400 * 40f + 37f + 12f - 400f, Scroller.ScrollPosition, FAR_POSITION_EPSILON);
+        }
+
+        /// <summary>
+        /// ScrollIntoView(Nearest → 아래쪽 셀이라 End) 트윈을 시작해 끝날 때까지 직접 진행시킨다. 진행한 걸음 수를 돌려준다.
+        /// </summary>
+        private int RunIntoViewTween()
+        {
+            Scroller.ScrollIntoView(400, ScrollAlign.Nearest, 12f, TweenType.EaseInOutCubic, 1f);
+            int steps = 0;
+            while (Scroller.IsTweening && steps < MAX_TWEEN_STEPS)
+            {
+                Scroller.UpdateTween(TWEEN_STEP);
+                steps++;
+            }
+
+            return steps;
         }
 
         private const float LOOP_SWEEP_STEP = 53f;

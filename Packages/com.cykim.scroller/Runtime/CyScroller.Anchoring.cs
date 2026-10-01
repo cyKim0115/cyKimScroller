@@ -11,9 +11,11 @@ namespace CyKim.Scroller
 
         /// <summary>
         /// 레이아웃 좌표가 delta만큼 밀렸을 때(같은 셀이 delta만큼 뒤로 이동) 화면이 그대로 보이도록 스크롤 위치를 delta만큼 옮긴다.
-        /// 진행 중인 트윈의 시작·목표(스냅 포함)와 정렬 위치도 같이 옮기고, 드래그 중이면 ScrollRect의 드래그 기준점과 직전 위치를 맞춘다.
+        /// 진행 중인 트윈의 시작점과 정렬 위치도 같이 옮기고, 드래그 중이면 ScrollRect의 드래그 기준점과 직전 위치를 맞춘다.
         /// </summary>
         /// <remarks>
+        /// 트윈 목표(스냅 포함)는 요청(슬롯·정렬 비율·여백)으로 매 프레임 현재 배치에서 다시 계산하므로 옮기지 않는다.
+        /// 호출자가 레이아웃을 실제로 바꿨으면 목표도 따라간다. 루프 순환 보정처럼 같은 화면의 슬롯이 바뀌면 호출자가 요청 슬롯을 옮긴다.
         /// 관성 속도는 그대로 둔다. 활성 셀 재배치·슬롯 번호·범위 갱신은 호출자가 한다. 할당 없음, O(1).
         /// 범위 갱신 중(델리게이트·셀 이벤트 콜백 안)에는 부르지 않는다.
         /// </remarks>
@@ -27,7 +29,6 @@ namespace CyKim.Scroller
             if (_tweening)
             {
                 _tweenFrom += delta;
-                _tweenTo += delta;
             }
 
             if (_alignmentActive)
@@ -164,9 +165,11 @@ namespace CyKim.Scroller
         /// 새 배치에서 같은 데이터가 같은 오프셋으로 뷰포트 맨 앞에 오도록 옮긴다. 결과는 스크롤 범위로 자르되,
         /// 드래그 중 가장자리 너머로 당기고 있었으면 그 가장자리에서 당긴 거리까지는 남긴다 (손가락 아래 콘텐츠가 가장자리로 튀지 않게).
         /// </summary>
-        private void RestoreAnchor(int dataIndex, float offset, float overscroll)
+        /// <returns>맨 앞에 맞춘 셀의 슬롯 (루프면 고른 사본). 기준 셀이 없으면 -1.</returns>
+        private int RestoreAnchor(int dataIndex, float offset, float overscroll)
         {
             float position;
+            int slot = -1;
             if (dataIndex < 0 || _layout.DataCount == 0)
             {
                 // 기준 셀이 없으면 콘텐츠 시작. 앞쪽으로 당기던 중이면 그 거리를 남긴다.
@@ -175,14 +178,17 @@ namespace CyKim.Scroller
             else
             {
                 int clamped = Mathf.Min(dataIndex, _layout.DataCount - 1);
-                int slot = (_layout.IsLoop ? _layout.MiddleSetFirstSlot : 0) + clamped;
+                slot = (_layout.IsLoop ? _layout.MiddleSetFirstSlot : 0) + clamped;
                 position = _layout.GetSlotStart(slot) + offset;
 
                 // 같은 화면이 되는 사본 중 가운데 창 안의 것을 고른다 (콘텐츠 끝에서 잘리지 않게).
-                position -= _layout.GetRecenterCycles(position) * _layout.CycleExtent;
+                int cycles = _layout.GetRecenterCycles(position);
+                position -= cycles * _layout.CycleExtent;
+                slot -= cycles * _layout.DataCount;
             }
 
             MoveContentTo(Mathf.Clamp(position, Mathf.Min(0f, overscroll), ScrollSize + Mathf.Max(0f, overscroll)));
+            return slot;
         }
     }
 }

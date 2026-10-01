@@ -22,7 +22,10 @@
 | 위치를 지키며 다시 읽기 | `ReloadDataKeepingPosition()` | — | — | — |
 | 보이는 셀만 다시 그리기 | `RefreshActiveCellViews()` | `reconfigureRows(at:)` | `notifyItemRangeChanged()` | `RefreshItem(index)` |
 | 항목으로 이동 | `JumpToDataIndex(...)` (정렬 비율·트윈·완료 콜백) | `scrollToRow(at:at:animated:)` | `scrollToPositionWithOffset()` / `smoothScrollToPosition()` | `ScrollToItem(index)` |
+| 항목이 보이게만 이동 | `ScrollIntoView(dataIndex, ScrollAlign, margin, ...)` (`Nearest`: 이미 보이거나 더 움직일 수 없으면 그대로(드래그·관성 유지), 아니면 최소 이동. 여백은 콘텐츠 끝까지만) | `scrollToRow(at:at:animated:)`의 `.none` (`.top`·`.middle`·`.bottom` = Start·Center·End) | `scrollToPosition()` / `LinearSmoothScroller`의 `SNAP_TO_ANY` (`SNAP_TO_START`·`SNAP_TO_END`) | `ScrollToItem(index)` |
 | 보이는 범위 | `StartDataIndex` / `EndDataIndex` | `indexPathsForVisibleRows` | `findFirstVisibleItemPosition()` / `findLastVisibleItemPosition()` | — |
+| 완전히 보이는지 | `IsDataIndexFullyVisible(dataIndex, margin)` (lookAhead 제외, 여백은 콘텐츠 끝까지만) | `rectForRow(at:)`를 보이는 영역과 비교 | `findFirstCompletelyVisibleItemPosition()` / `findLastCompletelyVisibleItemPosition()` | — |
+| 항목 위치·크기 | `GetCellStart` / `GetCellSize` (화면 밖 항목도) | `rectForRow(at:)` | 붙어 있는 뷰만 (`getDecoratedTop()` 등) | — |
 | 인덱스로 셀 찾기 | `GetCellViewAtDataIndex` | `cellForRow(at:)` | `findViewHolderForAdapterPosition()` | `GetRootElementForIndex` |
 | 위치로 인덱스 찾기 | `GetCellViewIndexAtPosition` | `indexPathForRow(at:)` | `findChildViewUnder()` | — |
 | 스크롤 위치 | `ScrollPosition`, `NormalizedScrollPosition` | `contentOffset` | `computeVerticalScrollOffset()` | `scrollOffset` (ScrollView) |
@@ -44,6 +47,7 @@
 | 재활용 셀 보관 | content 아래에 비활성으로 둔다 (재부모화 없음) |
 | 루프 세트 | 뷰포트·미리보기를 덮고 양쪽에 한 사이클씩 남는 최소 홀수 세트 (최소 5) |
 | 루프 스크롤바 | ScrollRect에서 떼어 숨기고, 루프를 끄면 다시 붙인다 |
-| 점프 후 리사이즈 | 점프·스냅 정렬을 유지한다 |
+| 점프 후 리사이즈 | 점프·스냅·ScrollIntoView 정렬을 유지한다 |
+| 트윈 목표 | 좌표 대신 요청(셀·정렬 위치·여백)을 저장하고 매 프레임 지금 배치에서 다시 계산한다. 트윈 중 재배치·뷰포트 크기 변화가 일어나도 맨 앞 셀 기준 화면을 그대로 두고 끊지 않고 이어 가며, 다음 프레임에 화면이 튀지 않게 시작점을 다시 잡아 같은 시각에 끝낸다. 마지막 프레임 콜백이 요청한 재배치도 끝내기 전에 처리하고, 완료 콜백은 끝에서 한 번 |
 | 콜백 안 리로드 | 범위 갱신이 끝난 뒤 처리한다 (재질의 포함) |
 | 코드로 콘텐츠 이동 | 루프 순환 보정·위치 유지 재배치가 한 이동 루틴을 쓴다. 드래그 중이면 손가락 기준점과 직전 위치를 같이 옮겨 놓을 때 관성 속도가 튀지 않는다. 가장자리 너머로 당기는 중이면 당긴 거리와 고무줄 저항을 이어 간다 |

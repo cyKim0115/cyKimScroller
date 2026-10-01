@@ -6,6 +6,7 @@ uGUI `ScrollRect` 위에서 동작하는 가상화 스크롤러. 보이는 구�
 - 세로·가로, 셀마다 다른 크기, 간격·패딩, 미리 만들기(lookAhead)
 - `CellIdentifier` 단위 셀 뷰 풀링 (재부모화 없이 비활성으로 보관)
 - 데이터 인덱스 점프 + 31종 트윈 + 커스텀 곡선, 점프 정렬은 뷰포트 크기가 바뀌어도 유지
+- 셀이 보이게만 옮기는 `ScrollIntoView` (Nearest·여백), 트윈 중 재배치·뷰포트 크기 변화가 일어나도 끊기거나 튀지 않고 새 목표로 이어 가는 트윈
 - 무한 루프 (짧은 목록도 뷰포트를 채우도록 세트 수 자동 결정, 재바인딩 없는 순환 보정, 드래그 중 기준점 재설정)
 - 스냅 (드래그·휠 후, 누르고 있는 동안은 대기), 속도 상한, 스크롤바 표시 모드
 - 스크롤 핫패스 GC 할당 0 (PlayMode 테스트로 검증)
@@ -85,25 +86,45 @@ public class ItemCellView : CyScrollerCellView
 | 분류 | 멤버 |
 |---|---|
 | 데이터 | `Delegate`, `ReloadData(factor)`, `ReloadDataKeepingPosition()`, `RefreshActiveCellViews()`, `GetCellView(prefab)` |
-| 이동 | `JumpToDataIndex(dataIndex, scrollerOffset, cellOffset, useSpacing, tweenType, tweenTime, onComplete, loopJumpDirection)`, `Snap()`, `InterruptTween()`, `GetJumpTargetPosition(...)` |
+| 이동 | `JumpToDataIndex(dataIndex, scrollerOffset, cellOffset, useSpacing, tweenType, tweenTime, onComplete, loopJumpDirection)`, `ScrollIntoView(dataIndex, align, margin, tweenType, tweenTime, onComplete, loopJumpDirection)`, `Snap()`, `InterruptTween()`, `GetJumpTargetPosition(...)` |
 | 위치 | `ScrollPosition`, `NormalizedScrollPosition`, `ScrollSize`, `ScrollRectSize`, `ContentSize`, `Velocity`, `LinearVelocity` |
-| 범위 | `NumberOfCells`, `NumberOfCellSlots`, `StartDataIndex`/`EndDataIndex`, `StartCellViewIndex`/`EndCellViewIndex`, `ActiveCellViews`, `GetCellViewAtDataIndex`, `GetCellViewAtCellIndex` |
-| 좌표 | `GetScrollPositionForDataIndex`, `GetScrollPositionForCellViewIndex`, `GetCellViewIndexAtPosition`, `GetDataIndexForCellViewIndex` |
+| 범위 | `NumberOfCells`, `NumberOfCellSlots`, `StartDataIndex`/`EndDataIndex`, `StartCellViewIndex`/`EndCellViewIndex`, `ActiveCellViews`, `GetCellViewAtDataIndex`, `GetCellViewAtCellIndex`, `IsDataIndexFullyVisible(dataIndex, margin)` |
+| 좌표 | `GetCellStart`, `GetCellSize`, `GetScrollPositionForDataIndex`, `GetScrollPositionForCellViewIndex`, `GetCellViewIndexAtPosition`, `GetDataIndexForCellViewIndex` |
 | 루프 | `Loop`, `LoopWhileDragging`, `ToggleLoop()`, `IgnoreLoopJump(bool)` |
 | 정리 | `ClearActive()`, `ClearRecycled()`, `ClearAll()`, `GetRecycledCellCount()` |
 | 이벤트 | `CellViewVisibilityChanged`, `CellViewInstantiated`, `CellViewReused`, `CellViewWillRecycle`, `ScrollerScrolled`, `ScrollerSnapped`, `ScrollerScrollingChanged`, `ScrollerTweeningChanged` |
 
 `scrollerOffset` / `cellOffset`은 0 = 앞(위·왼쪽), 0.5 = 가운데, 1 = 뒤. 가운데 정렬은 `JumpToDataIndex(i, 0.5f, 0.5f)`.
 
+`ScrollIntoView`는 셀이 보이게만 옮긴다. 기본 `ScrollAlign.Nearest`는 이미 완전히 보이면 움직이지 않고 바로 완료 콜백을 부르며,
+앞쪽에 걸리면 셀 시작을 뷰포트 시작에(Start), 뒤쪽이면 셀 끝을 뷰포트 끝에(End) 맞춘다. 셀이 여백까지 합쳐 뷰포트보다 크면 Start.
+`margin`은 셀 앞뒤로 남길 거리다 (Center는 쓰지 않음). 콘텐츠 끝 너머로는 남길 수 없으므로 첫·마지막 셀은 콘텐츠 끝까지 보이면 된다.
+선택 항목을 따라가는 목록이면 `ScrollIntoView(selected, margin: 8f)`.
+
 ## 동작 규칙
 
 - **content를 스크롤러가 소유한다.** 앵커·피벗·크기를 실행 시 다시 설정하고, content의 `LayoutGroup`·`ContentSizeFitter`는 끈다.
 - **셀 루트 RectTransform은 스크롤러가 배치한다.** 스케일·회전 같은 효과는 자식에 준다.
 - 셀 크기는 `GetCellViewSize`가 정한다. 셀이 스스로 크기를 바꾸면 `ReloadDataKeepingPosition()`으로 다시 계산한다.
-- 점프·스냅 뒤 정렬은 사용자가 드래그·휠·스크롤바로 움직이거나 `ScrollPosition`을 직접 바꾸기 전까지 유지된다
+- 점프·스냅·`ScrollIntoView` 뒤 정렬은 사용자가 드래그·휠·스크롤바로 움직이거나 `ScrollPosition`을 직접 바꾸기 전까지 유지된다
   (첫 프레임 Canvas 크기 확정, 화면 회전에도 같은 셀이 같은 자리에 있다).
+- 트윈은 목표 좌표를 저장하지 않고 요청(셀·정렬 위치·여백)으로 매 프레임 지금 배치에서 다시 계산한다.
+  트윈 중 재배치(`Spacing`·`Padding`·`Loop`·방향 변경, `ReloadDataKeepingPosition`)나 뷰포트 크기 변화가 일어나도 트윈은 멈추지 않는다.
+  재배치 순간 화면은 맨 앞 셀 기준으로 그대로 두고, 같은 데이터(개수가 줄었으면 잘린 인덱스)로 남은 시간 동안 이어 간 뒤
+  완료 콜백(스냅이면 `ScrollerSnapped`도)을 한 번 부른다. 루프에서는 가던 방향의 사본을 지킨다. 데이터가 0개가 되면 그 자리에서 끝내고 완료 콜백을 부른다.
+  - 다음 프레임에 화면이 튀지 않도록 트윈 시작점을 다시 잡는다. 지금 화면에서 새 목표까지 남은 거리를 곡선의 남은 진행에 싣고 같은 시각에 끝낸다.
+    1을 넘거나 되돌아오는 곡선(Back·Elastic·Bounce), 끝에서 1로 뛰는 곡선(EaseOutExpo·EaseInOutExpo), Custom은
+    지금 화면에서 남은 시간 동안 같은 곡선을 처음부터 다시 그린다 (화면과 목표가 같이 밀린 재배치면 원래 곡선을 그대로 잇는다).
+  - 마지막 프레임에 셀 표시 이벤트 같은 범위 갱신 콜백이 요청한 재배치도 트윈을 끝내기 전에 처리하므로 새 배치의 목표에서 끝나고 정렬도 유지된다.
+    같은 콜백에서 `ReloadData`를 요청하면 다른 프레임처럼 트윈을 멈추고 완료 콜백을 부르지 않는다.
 - `ScrollPosition`·`NormalizedScrollPosition`을 대입하면 진행 중인 트윈·관성을 멈춘다. `ReloadData`도 관성을 멈춘다.
-- 드래그 중에 `JumpToDataIndex`·`Snap`을 부르면 그 드래그를 끝내고 이동한다 (코드 요청 우선). 반대로 사용자 드래그·휠은 진행 중인 트윈을 멈춘다.
+  `ReloadData`·`InterruptTween`·사용자 드래그·휠·포인터 다운(`InterruptTweenOnPointerDown`)으로 멈춘 트윈은 완료 콜백을 부르지 않는다.
+- 드래그 중에 `JumpToDataIndex`·`Snap`·`ScrollIntoView`를 부르면 그 드래그를 끝내고 이동한다 (코드 요청 우선). `ScrollIntoView`의 Nearest는 실제로 움직여야 할 때만 끝낸다.
+  반대로 사용자 드래그·휠은 진행 중인 트윈을 멈춘다.
+- `ScrollIntoView`·`IsDataIndexFullyVisible`의 "보인다"는 lookAhead를 뺀 실제 뷰포트 기준이다. 여백은 콘텐츠 끝 너머로는 셈하지 않는다.
+  루프에서는 어느 사본이든 완전히 보이면 보이는 것으로 본다.
+  Nearest로 이미 보이는 셀이나 더 움직일 수 없는 셀(뷰포트보다 큰 셀이 이미 시작에 맞춰져 있을 때 등)을 요청하면 움직이지 않고 바로 완료 콜백을 부른다.
+  이때 진행 중인 트윈은 그 자리에서 멈추고(새 요청이 대신하므로 이전 완료 콜백은 없음), 드래그·관성은 그대로 둔다. Start·Center·End는 점프처럼 항상 정렬을 맞춘다.
 - 스크롤러가 코드로 콘텐츠를 옮기는 경로(루프 순환 보정, `ReloadDataKeepingPosition`·`Spacing` 등 재배치 뒤 위치 유지, `ScrollPosition` 대입)는 하나의 이동 루틴을 거친다.
   드래그 중이면 손가락 아래 기준점과 ScrollRect의 직전 위치를 같이 옮기므로, 드래그 도중 재배치·순환 보정이 일어나도 콘텐츠가 손가락에서 떨어지지 않고 놓을 때 관성 속도도 튀지 않는다.
   가장자리 너머로 당기는 중(Elastic)에도 같다. 다만 가장자리를 당기던 거리보다 더 넘기지는 않으며, 이어지는 드래그의 고무줄 저항도 끊기지 않는다.
