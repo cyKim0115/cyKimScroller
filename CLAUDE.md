@@ -3,7 +3,27 @@
 uGUI ScrollRect 기반 가상화·셀 재사용 스크롤러를 직접 구현하는 프로젝트.
 Unity 6000.6.0f1, URP, uGUI 2.6.0.
 
-> 설계 방향과 목표 범위는 아직 정하지 않았다. 정해지면 이 절을 갱신한다.
+> **미정**: 설계 방향과 목표 범위 (2026-10-01 기준, 별도 세션에서 결정 예정).
+> 정해지면 이 절을 갱신한다. 정하기 전에는 스크롤러 본체 구현을 시작하지 않는다.
+
+## 구조 (2026-10-01 결정)
+
+스크롤러는 **임베디드 UPM 패키지**로 만든다. 다른 프로젝트에 git URL로 가져다 쓰기 위해서다.
+`Assets/`에는 이 저장소에서만 쓰는 개발·검증용 씬만 둔다.
+
+```
+Packages/com.cykim.scroller/        패키지 본체 (git 추적)
+  package.json
+  Runtime/   CyKim.Scroller.asmdef          런타임 코드
+  Editor/    CyKim.Scroller.Editor.asmdef   인스펙터·에디터 도구
+  Tests/Runtime, Tests/Editor               테스트 어셈블리
+  Samples~/                                 배포용 샘플 (Unity가 임포트하지 않음)
+Assets/Dev/                         개발·검증 씬 (패키지에 포함 안 됨)
+```
+
+- 루트 네임스페이스 `CyKim.Scroller`. 런타임 asmdef는 `UnityEngine.UI`만 참조한다
+- 패키지 코드는 `Assets/`의 코드를 참조하지 않는다 (의존 방향은 Assets → 패키지 한쪽)
+- 테스트가 Test Runner에 안 보이면 `Packages/manifest.json`의 `testables`에 패키지 이름을 넣는다
 
 ## 상시 규칙
 
