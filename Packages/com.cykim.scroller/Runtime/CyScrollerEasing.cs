@@ -99,6 +99,40 @@ namespace CyKim.Scroller
             }
         }
 
+        /// <summary>
+        /// 곡선이 1을 넘거나 되돌아가지 않고 끊김 없이 1에 닿는지. 트윈 중 목표가 바뀔 때 남은 거리를 곡선의 남은 진행에 나눠 실어도 되는지 판단한다.
+        /// Back·Elastic·Bounce(되돌아옴), EaseOutExpo·EaseInOutExpo(1 직전에서 1로 뜀), Custom(알 수 없음)은 false.
+        /// </summary>
+        internal static bool ConvergesMonotonically(TweenType type)
+        {
+            switch (type)
+            {
+                case TweenType.Linear:
+                case TweenType.EaseInSine:
+                case TweenType.EaseOutSine:
+                case TweenType.EaseInOutSine:
+                case TweenType.EaseInQuad:
+                case TweenType.EaseOutQuad:
+                case TweenType.EaseInOutQuad:
+                case TweenType.EaseInCubic:
+                case TweenType.EaseOutCubic:
+                case TweenType.EaseInOutCubic:
+                case TweenType.EaseInQuart:
+                case TweenType.EaseOutQuart:
+                case TweenType.EaseInOutQuart:
+                case TweenType.EaseInQuint:
+                case TweenType.EaseOutQuint:
+                case TweenType.EaseInOutQuint:
+                case TweenType.EaseInExpo:
+                case TweenType.EaseInCirc:
+                case TweenType.EaseOutCirc:
+                case TweenType.EaseInOutCirc:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
         private static float BounceOut(float t)
         {
             if (t < 1f / BOUNCE_D1)

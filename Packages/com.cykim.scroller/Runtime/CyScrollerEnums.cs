@@ -29,6 +29,25 @@ namespace CyKim.Scroller
         Forward = 2,
     }
 
+    /// <summary><see cref="CyScroller.ScrollIntoView"/>에서 셀을 뷰포트 어디에 맞출지.</summary>
+    public enum ScrollAlign
+    {
+        /// <summary>셀 시작을 뷰포트 시작 + 여백에 맞춘다.</summary>
+        Start = 0,
+
+        /// <summary>셀 가운데를 뷰포트 가운데에 맞춘다. 여백은 쓰지 않는다.</summary>
+        Center = 1,
+
+        /// <summary>셀 끝을 뷰포트 끝 − 여백에 맞춘다.</summary>
+        End = 2,
+
+        /// <summary>
+        /// 이미 완전히 보이면(여백은 콘텐츠 끝까지만) 움직이지 않는다. 아니면 덜 움직이는 쪽으로 맞춘다 (앞쪽에 걸리면 Start, 뒤쪽이면 End).
+        /// 셀이 여백까지 합쳐 뷰포트보다 크면 Start. 목표가 지금 위치라 더 움직일 수 없을 때도 움직이지 않는다.
+        /// </summary>
+        Nearest = 3,
+    }
+
     /// <summary>
     /// 점프·스냅 트윈 곡선. 직렬화 값이 바뀌지 않도록 숫자를 고정한다.
     /// </summary>

@@ -700,18 +700,8 @@ namespace CyKim.Scroller
             return _layout.GetSlotStart(Mathf.Clamp(cellIndex, 0, _layout.SlotCount - 1));
         }
 
-        /// <summary>해당 데이터 셀의 시작 위치. 루프 모드에서는 가운데 세트 사본 기준.</summary>
-        public float GetScrollPositionForDataIndex(int dataIndex)
-        {
-            if (_layout.DataCount == 0)
-            {
-                return 0f;
-            }
-
-            int clamped = Mathf.Clamp(dataIndex, 0, _layout.DataCount - 1);
-            int slot = (_layout.IsLoop ? _layout.MiddleSetFirstSlot : 0) + clamped;
-            return _layout.GetSlotStart(slot);
-        }
+        /// <summary>해당 데이터 셀의 시작 위치. 루프 모드에서는 가운데 세트 사본 기준. <see cref="GetCellStart"/>와 같다.</summary>
+        public float GetScrollPositionForDataIndex(int dataIndex) => GetCellStart(dataIndex);
 
         /// <summary>위치(콘텐츠 좌표)에 있는 슬롯. 시작 위치가 position 이하인 마지막 슬롯. 비었으면 -1.</summary>
         public int GetCellViewIndexAtPosition(float position) => _layout.GetSlotAtPosition(position);
@@ -910,6 +900,9 @@ namespace CyKim.Scroller
 
         #region Deferred Work
 
+        /// <summary>콜백 안에서 미뤄 둔 정리·리로드·재배치가 남아 있는지.</summary>
+        private bool HasPendingWork => _reloadPending || _relayoutPending || _clearActivePending || _clearRecycledPending;
+
         /// <summary>
         /// 콜백 안에서 미뤄 둔 정리·리로드·재배치를 처리한다. 리로드나 재배치를 했으면 범위도 이미 갱신됐으므로 true.
         /// </summary>
@@ -1005,7 +998,8 @@ namespace CyKim.Scroller
         }
 
         /// <summary>
-        /// 배치를 다시 계산하되 보던 위치를 유지한다. 점프·스냅 정렬이 살아 있으면 그 정렬을, 아니면 맨 앞 셀과 그 안의 오프셋을 유지한다.
+        /// 배치를 다시 계산하되 보던 위치를 유지한다. 트윈 중이면 맨 앞 셀을 유지한 채 트윈을 이어 가고,
+        /// 점프·스냅 정렬이 살아 있으면 그 정렬을, 아니면 맨 앞 셀과 그 안의 오프셋을 유지한다.
         /// </summary>
         private void RelayoutKeepingPosition(bool requeryDelegate, bool reconfigure)
         {
@@ -1048,29 +1042,30 @@ namespace CyKim.Scroller
         /// <summary>
         /// <see cref="RelayoutKeepingPosition"/>의 본체. 위치 복원(앵커·정렬)은 <see cref="MoveContentTo"/>를 거쳐 드래그 기준점까지 맞춘다.
         /// </summary>
+        /// <remarks>
+        /// 진행 중인 트윈(점프·스냅·ScrollIntoView)은 끊지 않는다. 화면은 맨 앞 셀 기준으로 그대로 두고, 같은 데이터(개수가 줄었으면 잘린 인덱스)를
+        /// 향해 남은 시간 동안 계속 간다. 목표는 새 배치에서 다시 계산하고, 트윈 시작점은 다음 프레임에 화면이 튀지 않게 다시 잡는다(<see cref="RebaseTween"/>).
+        /// </remarks>
         private void ApplyRelayout(bool requeryDelegate, bool reconfigure)
         {
-            // 데이터를 다시 받으면 정렬 대상 인덱스가 다른 항목일 수 있으므로 정렬 유지는 버린다.
-            bool keepAlignment = _alignmentActive && !requeryDelegate;
-            int alignDataIndex = keepAlignment ? _layout.SlotToDataIndex(_alignSlot) : -1;
-
-            // 진행 중 점프·스냅은 정렬을 유지하면 새 배치의 목표에서 바로 끝내고 완료 처리한다 (콜백 유실 방지).
-            bool finishTween = _tweening && keepAlignment;
-            Action tweenComplete = null;
-            bool snapPending = false;
-            if (finishTween)
-            {
-                tweenComplete = _tweenComplete;
-                snapPending = _snapPending;
-                ClearTweenState();
-            }
-            else
-            {
-                CancelTween();
-            }
-
-            CaptureAnchor(out int anchorDataIndex, out float anchorOffset, out float anchorOverscroll);
+            // 회수 콜백(셀 이벤트·OnRecycled)이 트윈·정렬·위치를 바꿨어도 바뀐 상태로 처리하도록 셀부터 회수한 뒤 상태를 읽는다.
             RecycleAllActive();
+
+            // 트윈이 아닌 정렬 유지는 데이터를 다시 받지 않을 때만 지킨다 (다시 받으면 같은 인덱스가 다른 항목일 수 있다).
+            bool tweening = _tweening;
+            bool keepAlignment = _alignmentActive && (tweening || !requeryDelegate);
+            int alignDataIndex = keepAlignment ? _layout.SlotToDataIndex(_align.Slot) : -1;
+
+            float previousPosition = ReadPosition(_appliedVertical);
+            CaptureAnchor(out int anchorDataIndex, out float anchorOffset, out float anchorOverscroll);
+
+            // 루프 트윈이 맨 앞 셀보다 몇 사이클 앞뒤 사본으로 가던 중인지. 새 배치에서도 같은 방향 사본으로 가게 한다.
+            int alignSetOffset = 0;
+            if (tweening && _layout.IsLoop)
+            {
+                int dataCount = _layout.DataCount;
+                alignSetOffset = _align.Slot / dataCount - _layout.GetSlotAtPosition(previousPosition) / dataCount;
+            }
 
             if (reconfigure)
             {
@@ -1079,10 +1074,29 @@ namespace CyKim.Scroller
 
             RebuildLayout(requeryDelegate);
 
-            // 두 경로 모두 MoveContentTo로 옮긴다 (드래그 중이면 기준점·직전 위치까지 맞춤).
-            if (keepAlignment && alignDataIndex >= 0 && alignDataIndex < _layout.DataCount)
+            // 모든 경로가 MoveContentTo로 옮긴다 (드래그 중이면 기준점·직전 위치까지 맞춤).
+            bool tweenEmptied = false;
+            Action emptiedComplete = null;
+            if (tweening)
             {
-                _alignSlot = (_layout.IsLoop ? _layout.MiddleSetFirstSlot : 0) + alignDataIndex;
+                int anchorSlot = RestoreAnchor(anchorDataIndex, anchorOffset, anchorOverscroll);
+                if (_layout.DataCount > 0)
+                {
+                    _align.Slot = RemapAlignSlot(alignDataIndex, anchorSlot, alignSetOffset);
+                    RebaseTween(ReadPosition(_appliedVertical) - previousPosition);
+                }
+                else
+                {
+                    // 갈 셀이 없어졌다. 빈 목록 점프처럼 그 자리에서 끝내고 완료 콜백을 부른다.
+                    tweenEmptied = true;
+                    emptiedComplete = _tweenComplete;
+                    ClearTweenState();
+                    _alignmentActive = false;
+                }
+            }
+            else if (keepAlignment && alignDataIndex >= 0 && alignDataIndex < _layout.DataCount)
+            {
+                _align.Slot = (_layout.IsLoop ? _layout.MiddleSetFirstSlot : 0) + alignDataIndex;
                 ReapplyAlignment();
             }
             else
@@ -1095,9 +1109,9 @@ namespace CyKim.Scroller
             UpdateActiveRange();
             ApplyScrollbarVisibility();
 
-            if (finishTween)
+            if (tweenEmptied)
             {
-                CompleteTween(tweenComplete, snapPending, snapPending ? _alignSlot : -1, true);
+                CompleteTween(emptiedComplete, false, -1, true);
             }
         }
 
@@ -1130,8 +1144,13 @@ namespace CyKim.Scroller
             }
 
             // 점프·스냅으로 맞춘 상태면 새 뷰포트 크기로 정렬을 다시 계산한다 (예: 첫 프레임 Canvas 크기 확정, 화면 회전).
-            // 아니면 콘텐츠 시작 기준 위치를 그대로 둔다.
-            if (_alignmentActive)
+            // 트윈 중이면 목표는 매 프레임 다시 계산하므로, 다음 프레임에 화면이 튀지 않게 시작점만 다시 잡는다.
+            // 정렬이 없으면 콘텐츠 시작 기준 위치를 그대로 둔다.
+            if (_tweening)
+            {
+                RebaseTween(0f);
+            }
+            else if (_alignmentActive)
             {
                 ReapplyAlignment();
             }
