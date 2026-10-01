@@ -1,0 +1,48 @@
+# 다른 목록 UI와의 개념 대응
+
+가상화 목록 UI는 플랫폼마다 이름만 다를 뿐 "개수·크기·셀을 묻는 데이터 소스 + 재사용 풀"이라는 같은 구조를 쓴다.
+다른 환경에 익숙하다면 아래 표로 CyKim Scroller의 대응 멤버를 찾으면 된다. 개념 대응일 뿐이며 **소스 호환은 목표가 아니다.**
+
+## 데이터 소스와 셀
+
+| 개념 | CyKim Scroller | UIKit `UITableView` | Android `RecyclerView` | Unity UI Toolkit `ListView` |
+|---|---|---|---|---|
+| 항목 개수 | `ICyScrollerDelegate.GetNumberOfCells` | `tableView(_:numberOfRowsInSection:)` | `Adapter.getItemCount()` | `itemsSource.Count` |
+| 항목 크기 | `GetCellViewSize` (스크롤 축 길이) | `tableView(_:heightForRowAt:)` | 레이아웃 측정 | `fixedItemHeight` / `virtualizationMethod` |
+| 셀 만들기·바인딩 | `GetCellView` 안에서 `scroller.GetCellView(prefab)` 후 데이터 채우기 | `tableView(_:cellForRowAt:)` + `dequeueReusableCell(withIdentifier:for:)` | `onCreateViewHolder` / `onBindViewHolder` | `makeItem` / `bindItem` |
+| 재사용 풀 키 | `CyScrollerCellView.CellIdentifier` | `reuseIdentifier` | `getItemViewType()` | 템플릿 하나 |
+| 재활용 직전 훅 | `OnRecycled()`, `CellViewWillRecycle` | `prepareForReuse()` | `onViewRecycled()` | `unbindItem` |
+| 셀이 보이는 데이터 인덱스 | `DataIndex` (루프 슬롯은 `CellIndex`) | `indexPath` | `getBindingAdapterPosition()` | `bindItem`의 index |
+
+## 갱신과 이동
+
+| 개념 | CyKim Scroller | UIKit | Android | UI Toolkit |
+|---|---|---|---|---|
+| 전체 다시 읽기 | `ReloadData(scrollPositionFactor)` | `reloadData()` | `notifyDataSetChanged()` | `RefreshItems()` / `Rebuild()` |
+| 위치를 지키며 다시 읽기 | `ReloadDataKeepingPosition()` | — | — | — |
+| 보이는 셀만 다시 그리기 | `RefreshActiveCellViews()` | `reconfigureRows(at:)` | `notifyItemRangeChanged()` | `RefreshItem(index)` |
+| 항목으로 이동 | `JumpToDataIndex(...)` (정렬 비율·트윈·완료 콜백) | `scrollToRow(at:at:animated:)` | `scrollToPositionWithOffset()` / `smoothScrollToPosition()` | `ScrollToItem(index)` |
+| 보이는 범위 | `StartDataIndex` / `EndDataIndex` | `indexPathsForVisibleRows` | `findFirstVisibleItemPosition()` / `findLastVisibleItemPosition()` | — |
+| 인덱스로 셀 찾기 | `GetCellViewAtDataIndex` | `cellForRow(at:)` | `findViewHolderForAdapterPosition()` | `GetRootElementForIndex` |
+| 위치로 인덱스 찾기 | `GetCellViewIndexAtPosition` | `indexPathForRow(at:)` | `findChildViewUnder()` | — |
+| 스크롤 위치 | `ScrollPosition`, `NormalizedScrollPosition` | `contentOffset` | `computeVerticalScrollOffset()` | `scrollOffset` (ScrollView) |
+
+## 이벤트·스냅·루프
+
+| 개념 | CyKim Scroller | UIKit | Android | UI Toolkit |
+|---|---|---|---|---|
+| 셀 표시·숨김 | `CellViewVisibilityChanged` | `willDisplay` / `didEndDisplaying` | `onViewAttachedToWindow` / `onViewDetachedFromWindow` | `bindItem` / `unbindItem` |
+| 스크롤 중 | `ScrollerScrolled`, `ScrollerScrollingChanged` | `scrollViewDidScroll(_:)` | `OnScrollListener` | 스크롤바 `valueChanged` |
+| 스냅 | `Snapping` + `ScrollerSnapped` | `isPagingEnabled`, `scrollViewWillEndDragging(_:withVelocity:targetContentOffset:)` | `LinearSnapHelper` / `PagerSnapHelper` | — |
+| 무한 루프 | `Loop`, `LoopJumpDirection` | — | — | — |
+
+## 구현 메모
+
+| 항목 | CyKim Scroller의 방식 |
+|---|---|
+| 배치 | LayoutGroup 없이 셀 RectTransform을 직접 배치 |
+| 재활용 셀 보관 | content 아래에 비활성으로 둔다 (재부모화 없음) |
+| 루프 세트 | 뷰포트·미리보기를 덮고 양쪽에 한 사이클씩 남는 최소 홀수 세트 (최소 5) |
+| 루프 스크롤바 | ScrollRect에서 떼어 숨기고, 루프를 끄면 다시 붙인다 |
+| 점프 후 리사이즈 | 점프·스냅 정렬을 유지한다 |
+| 콜백 안 리로드 | 범위 갱신이 끝난 뒤 처리한다 (재질의 포함) |
