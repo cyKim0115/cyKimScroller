@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Unity.Profiling;
 using UnityEngine;
 using UnityEngine.Events;
 using UnityEngine.UI;
@@ -29,6 +30,10 @@ namespace CyKim.Scroller
 
         // 잘못된 셀 크기(대부분 0) 때문에 한 프레임에 셀 수만 개를 만드는 일을 막는 상한.
         private const int MAX_ACTIVE_CELLS = 2048;
+
+        // Profiler에서 보이는 구간. Auto()는 구조체 스코프라 할당하지 않는다.
+        private static readonly ProfilerMarker _updateActiveRangeMarker = new ProfilerMarker("CyScroller.UpdateActiveRange");
+        private static readonly ProfilerMarker _relayoutMarker = new ProfilerMarker("CyScroller.Relayout");
 
         [Header("Layout")]
         [SerializeField] private ScrollDirection _scrollDirection = ScrollDirection.Vertical;
@@ -352,8 +357,7 @@ namespace CyKim.Scroller
                 _alignmentActive = false;
                 _snapArmed = false;
                 _scrollRect.StopMovement();
-                SetScrollPositionInternal(Mathf.Clamp(value, 0f, ScrollSize));
-                SyncScrollRectAfterContentMove();
+                MoveContentTo(Mathf.Clamp(value, 0f, ScrollSize));
                 UpdateActiveRange();
             }
         }
@@ -579,9 +583,8 @@ namespace CyKim.Scroller
             RebuildLayout(true);
             _hasLoaded = true;
 
-            SetScrollPositionInternal(GetPositionForFactor(scrollPositionFactor));
+            MoveContentTo(GetPositionForFactor(scrollPositionFactor));
             _lastViewportExtent = ScrollRectSize;
-            SyncScrollRectAfterContentMove();
             UpdateActiveRange();
             ApplyScrollbarVisibility();
         }
@@ -1036,6 +1039,17 @@ namespace CyKim.Scroller
                 return;
             }
 
+            using (_relayoutMarker.Auto())
+            {
+                ApplyRelayout(requeryDelegate, reconfigure);
+            }
+        }
+
+        /// <summary>
+        /// <see cref="RelayoutKeepingPosition"/>의 본체. 위치 복원(앵커·정렬)은 <see cref="MoveContentTo"/>를 거쳐 드래그 기준점까지 맞춘다.
+        /// </summary>
+        private void ApplyRelayout(bool requeryDelegate, bool reconfigure)
+        {
             // 데이터를 다시 받으면 정렬 대상 인덱스가 다른 항목일 수 있으므로 정렬 유지는 버린다.
             bool keepAlignment = _alignmentActive && !requeryDelegate;
             int alignDataIndex = keepAlignment ? _layout.SlotToDataIndex(_alignSlot) : -1;
@@ -1055,7 +1069,7 @@ namespace CyKim.Scroller
                 CancelTween();
             }
 
-            CaptureAnchor(out int anchorDataIndex, out float anchorOffset);
+            CaptureAnchor(out int anchorDataIndex, out float anchorOffset, out float anchorOverscroll);
             RecycleAllActive();
 
             if (reconfigure)
@@ -1065,6 +1079,7 @@ namespace CyKim.Scroller
 
             RebuildLayout(requeryDelegate);
 
+            // 두 경로 모두 MoveContentTo로 옮긴다 (드래그 중이면 기준점·직전 위치까지 맞춤).
             if (keepAlignment && alignDataIndex >= 0 && alignDataIndex < _layout.DataCount)
             {
                 _alignSlot = (_layout.IsLoop ? _layout.MiddleSetFirstSlot : 0) + alignDataIndex;
@@ -1073,11 +1088,10 @@ namespace CyKim.Scroller
             else
             {
                 _alignmentActive = false;
-                RestoreAnchor(anchorDataIndex, anchorOffset);
+                RestoreAnchor(anchorDataIndex, anchorOffset, anchorOverscroll);
             }
 
             _lastViewportExtent = ScrollRectSize;
-            SyncScrollRectAfterContentMove();
             UpdateActiveRange();
             ApplyScrollbarVisibility();
 
@@ -1085,42 +1099,6 @@ namespace CyKim.Scroller
             {
                 CompleteTween(tweenComplete, snapPending, snapPending ? _alignSlot : -1, true);
             }
-        }
-
-        /// <summary>뷰포트 맨 앞에 걸친 데이터와 그 셀 시작에서의 오프셋. content가 맞춰진 축(이전 축일 수 있음)으로 읽는다.</summary>
-        private void CaptureAnchor(out int dataIndex, out float offset)
-        {
-            if (_layout.SlotCount == 0)
-            {
-                dataIndex = -1;
-                offset = 0f;
-                return;
-            }
-
-            float position = ReadPosition(_appliedVertical);
-            int slot = _layout.GetSlotAtPosition(position);
-            dataIndex = _layout.SlotToDataIndex(slot);
-            offset = position - _layout.GetSlotStart(slot);
-        }
-
-        private void RestoreAnchor(int dataIndex, float offset)
-        {
-            float position;
-            if (dataIndex < 0 || _layout.DataCount == 0)
-            {
-                position = _layout.IsLoop ? _layout.MiddleSetStart : 0f;
-            }
-            else
-            {
-                int clamped = Mathf.Min(dataIndex, _layout.DataCount - 1);
-                int slot = (_layout.IsLoop ? _layout.MiddleSetFirstSlot : 0) + clamped;
-                position = _layout.GetSlotStart(slot) + offset;
-
-                // 같은 화면이 되는 사본 중 가운데 창 안의 것을 고른다 (콘텐츠 끝에서 잘리지 않게).
-                position -= _layout.GetRecenterCycles(position) * _layout.CycleExtent;
-            }
-
-            SetScrollPositionInternal(Mathf.Clamp(position, 0f, ScrollSize));
         }
 
         /// <summary>정규화 위치 → 스크롤 위치. 루프면 가운데 세트 기준 ±반 사이클 창 안의 같은 배치.</summary>
@@ -1191,6 +1169,7 @@ namespace CyKim.Scroller
             return vertical ? anchored.y : -anchored.x;
         }
 
+        /// <summary>content 축 위치만 쓴다. 스크롤러 코드는 드래그 기준까지 맞추는 <see cref="MoveContentTo"/>를 쓴다.</summary>
         private void SetScrollPositionInternal(float position)
         {
             Vector2 anchored = _content.anchoredPosition;
@@ -1204,25 +1183,6 @@ namespace CyKim.Scroller
             }
 
             _content.anchoredPosition = anchored;
-        }
-
-        /// <summary>
-        /// 스크롤러가 콘텐츠 위치를 직접 옮긴 뒤 ScrollRect 내부 상태를 맞춘다.
-        /// 드래그 중이면 기준점을 다시 잡고, onValueChanged 밖이면 직전 위치도 맞춰 속도 계산에 순간이동이 섞이지 않게 한다.
-        /// </summary>
-        private void SyncScrollRectAfterContentMove()
-        {
-            if (!_dragging || _dragEventData == null)
-            {
-                return;
-            }
-
-            _scrollRect.OnBeginDrag(_dragEventData);
-            if (!_inValueChanged)
-            {
-                // onValueChanged 안이라면 ScrollRect가 콜백 뒤에 직접 UpdatePrevData를 한다.
-                _scrollRect.Rebuild(CanvasUpdate.PostLayout);
-            }
         }
 
         /// <summary>
@@ -1366,6 +1326,15 @@ namespace CyKim.Scroller
                 return;
             }
 
+            using (_updateActiveRangeMarker.Auto())
+            {
+                ApplyActiveRange();
+            }
+        }
+
+        /// <summary>현재 위치에 맞게 활성 슬롯 범위를 맞춘다. 나가는 셀을 먼저 회수하고 들어오는 셀을 받는다.</summary>
+        private void ApplyActiveRange()
+        {
             float position = ScrollPosition;
             _layout.GetSlotRange(
                 position - _lookAheadBefore,

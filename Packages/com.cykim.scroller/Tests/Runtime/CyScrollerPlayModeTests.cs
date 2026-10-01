@@ -11,6 +11,9 @@ namespace CyKim.Scroller.Tests
     {
         private const float EPSILON = 0.01f;
 
+        // 3만 근처 위치는 플레이 모드에서 RectTransform anchoredPosition 기록 뒤 읽은 값이 0.02 안팎까지 어긋날 때가 있다 (float 정밀도).
+        private const float FAR_POSITION_EPSILON = 0.05f;
+
         private ScrollerFixture _fixture;
 
         [TearDown]
@@ -324,7 +327,7 @@ namespace CyKim.Scroller.Tests
 
             Assert.AreEqual(1, completed);
             Assert.IsFalse(Scroller.IsTweening);
-            Assert.AreEqual(30000f, Scroller.ScrollPosition, EPSILON);
+            Assert.AreEqual(30000f, Scroller.ScrollPosition, FAR_POSITION_EPSILON);
             Assert.AreEqual(2, tweenEvents, "시작·종료 각 1회");
             Assert.IsNotNull(Scroller.GetCellViewAtDataIndex(300));
         }
@@ -1020,6 +1023,323 @@ namespace CyKim.Scroller.Tests
 
         #endregion
 
+        #region Drag-safe Shift
+
+        // 드래그 속도 비교: 포인터를 프레임 dt에 비례해 움직여 프레임 속도와 상관없이 같은 속도 샘플이 나오게 한다.
+        private const float DRAG_SPEED = 1500f;
+        private const float DRAG_PHASE_TIME = 0.3f;
+        private const int DRAG_PHASE_MIN_FRAMES = 10;
+        private const float DRAG_START_POSITION = 20000f;
+        private const float SHIFT_DELTA = 3000f;
+
+        // 순간이동이 섞이면 놓는 속도가 대략 10 × SHIFT_DELTA × e^-3 ≈ 1500 더 나온다. 섞이지 않으면 차이는 1% 미만.
+        private const float VELOCITY_TOLERANCE = DRAG_SPEED * 0.1f;
+
+        [UnityTest]
+        public IEnumerator Shift_MidDrag_ReleaseVelocityMatchesUnshifted()
+        {
+            _fixture = ScrollerFixture.Create(ScrollDirection.Vertical, TestDelegate.Uniform(1000, 100f));
+            yield return null;
+
+            var result = new DragResult();
+            yield return DragAndRelease(null, result);
+            float unshifted = result.ReleaseVelocity;
+            Assert.AreEqual(DRAG_SPEED, unshifted, VELOCITY_TOLERANCE, "기준 드래그는 포인터 속도로 수렴해야 한다");
+            Assert.AreEqual(DRAG_START_POSITION + result.PointerTravel, result.ReleasePosition, 1f);
+
+            // 좌표 이동을 직접 요청
+            yield return DragAndRelease(() => Scroller.ShiftScrollPosition(SHIFT_DELTA), result);
+            Assert.AreEqual(unshifted, result.ReleaseVelocity, VELOCITY_TOLERANCE, "ShiftScrollPosition의 이동량이 놓는 속도에 섞이면 안 된다");
+            Assert.AreEqual(DRAG_START_POSITION + result.PointerTravel + SHIFT_DELTA, result.ReleasePosition, 1f,
+                "옮긴 뒤에도 손가락을 그대로 따라가야 한다");
+
+            // 뷰포트 위쪽 셀 100개가 30씩 커지는 재배치 → 맨 앞 셀 유지로 같은 만큼 이동
+            yield return DragAndRelease(() =>
+            {
+                for (int i = 0; i < 100; i++)
+                {
+                    _fixture.Delegate.Sizes[i] = 130f;
+                }
+
+                Scroller.ReloadDataKeepingPosition();
+            }, result);
+            Assert.AreEqual(unshifted, result.ReleaseVelocity, VELOCITY_TOLERANCE, "재배치 위치 복원이 놓는 속도에 섞이면 안 된다");
+            Assert.AreEqual(DRAG_START_POSITION + result.PointerTravel + SHIFT_DELTA, result.ReleasePosition, 1f,
+                "재배치 뒤에도 손가락을 그대로 따라가야 한다");
+        }
+
+        [UnityTest]
+        public IEnumerator Shift_DuringTween_MovesTweenEndpoints()
+        {
+            // 위치를 수천 단위로 둔다. 수만 단위에서는 RectTransform 왕복 오차가 EPSILON을 넘을 수 있다.
+            // 트윈을 1초로 둬서 한 프레임에 끝까지 가 버리는 일(시작점 검증이 무의미해짐)을 피한다.
+            const float TWEEN_TIME = 1f;
+            const float TWEEN_TARGET = 3000f;
+            const float SHIFT = 500f;
+            _fixture = ScrollerFixture.Create(ScrollDirection.Vertical, TestDelegate.Uniform(1000, 100f));
+            int completed = 0;
+            Scroller.JumpToDataIndex(30, 0f, 0f, false, TweenType.Linear, TWEEN_TIME, () => completed++);
+            yield return null;
+            Assert.IsTrue(Scroller.IsTweening);
+
+            // 0 → 3000 선형 트윈이므로 지금 위치로 진행률을 안다.
+            float before = Scroller.ScrollPosition;
+            float progress = before / TWEEN_TARGET;
+            Scroller.ShiftScrollPosition(SHIFT);
+            Assert.AreEqual(before + SHIFT, Scroller.ScrollPosition, EPSILON, "옮긴 만큼만 움직여야 한다");
+            Assert.IsTrue(Scroller.IsTweening, "좌표 이동은 트윈을 끊지 않는다");
+
+            // 이번 프레임 LateUpdate는 지금 읽은 dt로 트윈을 진행한다. 시작·목표가 모두 옮겨졌으면 500 → 3500 직선 위에 있어야 한다.
+            // 시작점을 옮기지 않으면(0 → 3500) 500 × (1 − 진행률)만큼 뒤로 튄다.
+            float nextProgress = Mathf.Min(1f, progress + Time.unscaledDeltaTime / TWEEN_TIME);
+            float expectedNext = Mathf.LerpUnclamped(SHIFT, TWEEN_TARGET + SHIFT, nextProgress);
+            yield return null;
+            Assert.AreEqual(expectedNext, Scroller.ScrollPosition, 1f, "트윈 시작점도 같은 만큼 옮겨져야 한다");
+
+            float previous = Scroller.ScrollPosition;
+            float timeout = 3f;
+            while (completed == 0 && timeout > 0f)
+            {
+                timeout -= Time.unscaledDeltaTime;
+                yield return null;
+                Assert.GreaterOrEqual(Scroller.ScrollPosition, previous - EPSILON, "선형 트윈은 뒤로 가지 않는다");
+                previous = Scroller.ScrollPosition;
+            }
+
+            Assert.AreEqual(1, completed);
+            Assert.AreEqual(TWEEN_TARGET + SHIFT, Scroller.ScrollPosition, EPSILON, "트윈 목표도 같은 만큼 옮겨져야 한다");
+        }
+
+        // 가장자리 너머로 끄는 단계 (드래그 시작점 기준 스크롤 위치 방향 손가락 이동량). 1·2단계가 같아 손가락이 멈춘 프레임을 흉내 낸다.
+        private static readonly float[] PULL_PAST_START_STEPS = { -60f, -100f, -100f, -140f };
+        private static readonly float[] PULL_PAST_END_STEPS = { 60f, 100f, 100f, 140f };
+
+        // 고무줄 감쇠 위치 비교 허용 오차. 가장자리로 자르면 50px 안팎, 감쇠를 한 번 더 걸면 20px 넘게 어긋난다.
+        private const float PULL_EPSILON = 0.1f;
+
+        [UnityTest]
+        public IEnumerator Relayout_MidDragPastTopEdge_KeepsPullAndRubberBand()
+        {
+            yield return RelayoutWhilePullingPastStart(ScrollDirection.Vertical);
+        }
+
+        [UnityTest]
+        public IEnumerator Relayout_MidDragPastLeftEdge_KeepsPullAndRubberBand()
+        {
+            yield return RelayoutWhilePullingPastStart(ScrollDirection.Horizontal);
+        }
+
+        /// <summary>
+        /// 앞쪽 가장자리 너머로 당긴 채 손가락이 멈춘 프레임에 재배치(Spacing)한다.
+        /// 맨 앞 셀(0번) 시작은 그대로이므로 당긴 위치와 이후 고무줄 감쇠가 재배치 없는 드래그와 같아야 한다.
+        /// </summary>
+        private IEnumerator RelayoutWhilePullingPastStart(ScrollDirection direction)
+        {
+            _fixture = ScrollerFixture.Create(direction, TestDelegate.Uniform(100, 100f));
+            _fixture.ScrollRect.inertia = false;
+            yield return null;
+
+            var expected = new float[PULL_PAST_START_STEPS.Length];
+            yield return PullPastEdge(0f, PULL_PAST_START_STEPS, expected, null);
+            Assert.Less(expected[1], -10f, "기준 드래그는 앞쪽 가장자리 너머로 당겨져야 한다");
+            Assert.Greater(expected[1], -100f, "당긴 거리는 고무줄 감쇠로 손가락 이동보다 짧다");
+
+            var actual = new float[PULL_PAST_START_STEPS.Length];
+            yield return PullPastEdge(0f, PULL_PAST_START_STEPS, actual, step =>
+            {
+                if (step == 2)
+                {
+                    float pulled = Scroller.ScrollPosition;
+                    Scroller.Spacing = 10f;
+                    Assert.AreEqual(pulled, Scroller.ScrollPosition, PULL_EPSILON, "재배치가 당긴 위치를 가장자리로 자르면 안 된다");
+                }
+
+                return null;
+            });
+
+            for (int i = 0; i < actual.Length; i++)
+            {
+                Assert.AreEqual(expected[i], actual[i], PULL_EPSILON, $"단계 {i}: 재배치 뒤에도 같은 손가락 위치는 같은 당김 위치여야 한다");
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator Relayout_InScrollEventMidDragPastBottomEdge_FollowsMovedEdge()
+        {
+            const int GROWN_CELLS = 30;
+            const float GROWTH = GROWN_CELLS * 100f;
+            _fixture = ScrollerFixture.Create(ScrollDirection.Vertical, TestDelegate.Uniform(100, 100f));
+            _fixture.ScrollRect.inertia = false;
+            yield return null;
+
+            float bottom = Scroller.ScrollSize;
+            var expected = new float[PULL_PAST_END_STEPS.Length];
+            yield return PullPastEdge(bottom, PULL_PAST_END_STEPS, expected, null);
+            Assert.Greater(expected[1], bottom + 10f, "기준 드래그는 아래쪽 가장자리 너머로 당겨져야 한다");
+
+            // 1단계 이동을 알리는 스크롤 이벤트(onValueChanged 안)에서 위쪽 셀 30개를 100씩 키워 위치 유지 리로드
+            // → 맨 앞 셀과 아래쪽 가장자리가 함께 3000 뒤로 간다.
+            bool relayoutOnScroll = false;
+            int scrolledEvents = 0;
+            Scroller.ScrollerScrolled += (_, __, ___) =>
+            {
+                scrolledEvents++;
+                if (!relayoutOnScroll)
+                {
+                    return;
+                }
+
+                relayoutOnScroll = false;
+                for (int i = 0; i < GROWN_CELLS; i++)
+                {
+                    _fixture.Delegate.Sizes[i] = 200f;
+                }
+
+                Scroller.ReloadDataKeepingPosition();
+            };
+
+            // 재배치한 다음 프레임, 손가락이 그대로면 ScrollRect의 직전 위치·경계가 맞아 스크롤 이벤트가 다시 오지 않아야 한다.
+            IEnumerator WaitIdleFrame()
+            {
+                int events = scrolledEvents;
+                float position = Scroller.ScrollPosition;
+                yield return null;
+                Assert.AreEqual(events, scrolledEvents, "재배치 뒤 ScrollRect의 직전 경계가 어긋나면 안 된다");
+                Assert.AreEqual(position, Scroller.ScrollPosition, PULL_EPSILON);
+            }
+
+            var actual = new float[PULL_PAST_END_STEPS.Length];
+            yield return PullPastEdge(bottom, PULL_PAST_END_STEPS, actual, step =>
+            {
+                if (step == 1)
+                {
+                    relayoutOnScroll = true;
+                }
+
+                return step == 2 ? WaitIdleFrame() : null;
+            });
+
+            Assert.IsFalse(relayoutOnScroll, "스크롤 이벤트 안에서 재배치가 일어나야 한다");
+            Assert.AreEqual(bottom + GROWTH, Scroller.ScrollSize, EPSILON);
+            Assert.AreEqual(expected[0], actual[0], PULL_EPSILON);
+            for (int i = 1; i < actual.Length; i++)
+            {
+                Assert.AreEqual(expected[i] + GROWTH, actual[i], PULL_EPSILON, $"단계 {i}: 옮겨진 가장자리에서 같은 거리만큼 당겨져 있어야 한다");
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator Loop_JumpThenRecenter_KeepsAlignmentOnViewportResize()
+        {
+            _fixture = ScrollerFixture.Create(ScrollDirection.Vertical, TestDelegate.Uniform(10, 100f), loop: true);
+            yield return null;
+
+            // 뒤쪽(Forward) 사본(슬롯 28)으로 가운데 정렬 점프 → 목표 2650은 창(1500~2500) 밖이라 바로 슬롯 18 사본으로 순환 보정된다.
+            Scroller.JumpToDataIndex(8, 0.5f, 0.5f, false, loopJumpDirection: LoopJumpDirection.Forward);
+            Assert.AreEqual(1650f, Scroller.ScrollPosition, EPSILON);
+
+            // ScrollRect가 이동을 알리는 프레임. 정렬 위치도 같이 옮겨졌어야 정렬이 풀리지 않는다.
+            yield return null;
+            yield return null;
+
+            ((RectTransform)_fixture.ScrollRect.transform).sizeDelta = new Vector2(ScrollerFixture.VIEWPORT_WIDTH, 600f);
+            yield return null;
+            yield return null;
+
+            Assert.AreEqual(1850f - 300f, Scroller.ScrollPosition, EPSILON, "순환 보정 뒤에도 점프 정렬이 유지돼야 한다");
+            int centerSlot = Scroller.GetCellViewIndexAtPosition(Scroller.ScrollPosition + 300f);
+            Assert.AreEqual(8, Scroller.GetDataIndexForCellViewIndex(centerSlot));
+        }
+
+        /// <summary>
+        /// 포인터를 일정 속도로 위로 끌다가 놓는다. 앞 구간 마지막 프레임의 드래그 이동 직후(같은 프레임 LateUpdate 전)에
+        /// midDrag를 한 번 부르고, 뒤 구간을 더 끈 뒤 놓는 순간의 속도·위치를 기록한다.
+        /// </summary>
+        private IEnumerator DragAndRelease(System.Action midDrag, DragResult result)
+        {
+            Scroller.ScrollPosition = DRAG_START_POSITION;
+            yield return null;
+
+            GameObject target = _fixture.ScrollRect.gameObject;
+            var start = new Vector2(Screen.width * 0.5f, Screen.height * 0.5f);
+            var eventData = new PointerEventData(null) { button = PointerEventData.InputButton.Left, position = start };
+            ExecuteEvents.Execute(target, eventData, ExecuteEvents.initializePotentialDrag);
+            ExecuteEvents.Execute(target, eventData, ExecuteEvents.beginDragHandler);
+
+            float travel = 0f;
+            for (int phase = 0; phase < 2; phase++)
+            {
+                float elapsed = 0f;
+                int frames = 0;
+                while (elapsed < DRAG_PHASE_TIME || frames < DRAG_PHASE_MIN_FRAMES)
+                {
+                    yield return null;
+                    float deltaTime = Time.unscaledDeltaTime;
+                    travel += DRAG_SPEED * deltaTime;
+                    eventData.position = start + new Vector2(0f, travel);
+                    ExecuteEvents.Execute(target, eventData, ExecuteEvents.dragHandler);
+                    elapsed += deltaTime;
+                    frames++;
+                }
+
+                if (phase == 0)
+                {
+                    midDrag?.Invoke();
+                }
+            }
+
+            // 마지막 드래그 프레임의 LateUpdate가 속도를 계산한 다음 프레임에서, 관성이 적용되기 전에 놓는다.
+            yield return null;
+            result.PointerTravel = travel;
+            result.ReleasePosition = Scroller.ScrollPosition;
+            ExecuteEvents.Execute(target, eventData, ExecuteEvents.endDragHandler);
+            result.ReleaseVelocity = Scroller.LinearVelocity;
+        }
+
+        private sealed class DragResult
+        {
+            public float PointerTravel;
+            public float ReleasePosition;
+            public float ReleaseVelocity;
+        }
+
+        /// <summary>
+        /// startPosition에서 손가락을 steps(시작점 기준, 스크롤 위치가 커지는 방향이 양수)대로 끌고,
+        /// 단계마다 다음 프레임의 위치를 positions에 기록한 뒤 놓는다.
+        /// beforeStep(i)는 i단계 이동 직전에 불리며, 돌려준 코루틴이 있으면 끝날 때까지 기다린다 (null이면 재배치 없는 기준 드래그).
+        /// </summary>
+        private IEnumerator PullPastEdge(float startPosition, float[] steps, float[] positions, System.Func<int, IEnumerator> beforeStep)
+        {
+            Scroller.ScrollPosition = startPosition;
+            yield return null;
+
+            // 세로는 손가락을 위로(+y), 가로는 왼쪽으로(−x) 끌어야 스크롤 위치가 커진다.
+            Vector2 forward = Scroller.ScrollDirection == ScrollDirection.Vertical ? Vector2.up : Vector2.left;
+            GameObject target = _fixture.ScrollRect.gameObject;
+            var start = new Vector2(Screen.width * 0.5f, Screen.height * 0.5f);
+            var eventData = new PointerEventData(null) { button = PointerEventData.InputButton.Left, position = start };
+            ExecuteEvents.Execute(target, eventData, ExecuteEvents.initializePotentialDrag);
+            ExecuteEvents.Execute(target, eventData, ExecuteEvents.beginDragHandler);
+
+            for (int i = 0; i < steps.Length; i++)
+            {
+                IEnumerator hook = beforeStep?.Invoke(i);
+                if (hook != null)
+                {
+                    yield return hook;
+                }
+
+                eventData.position = start + forward * steps[i];
+                ExecuteEvents.Execute(target, eventData, ExecuteEvents.dragHandler);
+                yield return null;
+                positions[i] = Scroller.ScrollPosition;
+            }
+
+            ExecuteEvents.Execute(target, eventData, ExecuteEvents.endDragHandler);
+        }
+
+        #endregion
+
         #region Allocation
 
         [Test]
@@ -1043,6 +1363,53 @@ namespace CyKim.Scroller.Tests
                     Scroller.ScrollPosition = position;
                 }
             }, UnityEngine.TestTools.Constraints.Is.Not.AllocatingGCMemory());
+        }
+
+        private const float LOOP_SWEEP_STEP = 53f;
+        private const int LOOP_SWEEP_CYCLES = 4;
+
+        [Test]
+        public void LoopScrollSweep_WithRecenter_DoesNotAllocateAfterWarmup()
+        {
+            _fixture = ScrollerFixture.Create(ScrollDirection.Vertical, TestDelegate.Uniform(40, 37f), loop: true, spacing: 3f);
+            Scroller.LookAheadBefore = 60f;
+            Scroller.LookAheadAfter = 100f;
+            int steps = Mathf.CeilToInt(Scroller.Layout.CycleExtent * LOOP_SWEEP_CYCLES / LOOP_SWEEP_STEP);
+
+            // 풀과 내부 리스트 용량을 채운다.
+            SweepLoop(steps, LOOP_SWEEP_STEP);
+            SweepLoop(steps, -LOOP_SWEEP_STEP);
+
+            int recentered = 0;
+            Assert.That(() =>
+            {
+                recentered += SweepLoop(steps, LOOP_SWEEP_STEP);
+                recentered += SweepLoop(steps, -LOOP_SWEEP_STEP);
+            }, UnityEngine.TestTools.Constraints.Is.Not.AllocatingGCMemory());
+
+            // 앞뒤로 네 사이클씩 지나면 방향마다 네 번 안팎 순환 보정된다.
+            Assert.GreaterOrEqual(recentered, LOOP_SWEEP_CYCLES * 2 - 2, "순환 보정 구간을 지나야 한다");
+        }
+
+        /// <summary>
+        /// 위치를 step씩 옮기고, ScrollRect가 LateUpdate에서 하듯 onValueChanged를 알려 순환 보정 경로를 탄다.
+        /// 순환 보정이 일어난 횟수를 돌려준다.
+        /// </summary>
+        private int SweepLoop(int steps, float step)
+        {
+            int recentered = 0;
+            for (int i = 0; i < steps; i++)
+            {
+                float target = Scroller.ScrollPosition + step;
+                Scroller.ScrollPosition = target;
+                _fixture.ScrollRect.onValueChanged.Invoke(Vector2.zero);
+                if (Mathf.Abs(Scroller.ScrollPosition - target) > 1f)
+                {
+                    recentered++;
+                }
+            }
+
+            return recentered;
         }
 
         #endregion

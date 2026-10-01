@@ -6,9 +6,9 @@
 
 ## 요약
 - 후보 74건을 기능 35개와 거절 목록으로 병합했습니다. 중복이 가장 많았던 축은 콘텐츠 이동 프리미티브(4건), 앵커·상태 보존(5), 증분 변경(4), 크기 측정·보정(4), 채팅 모드(4), 게임패드 내비게이션(4), 스티키 헤더(4), 중첩 제스처(3)입니다.
-- 루프 재중심, 앵커 복원, 증분 변경, 크기 보정, 채팅 기능은 모두 드래그 중에도 안전한 `ShiftScrollPosition` 하나에 의존합니다. 이 기반을 만들면 v0.1의 잠재 버그 두 개도 함께 고칩니다.
-  - 드래그 중에 `RelayoutKeepingPosition`이 실행되면 드래그 기준점이 갱신되지 않아 콘텐츠가 튑니다.
-  - 재배치할 때 `CancelTween`이 실행 중인 `JumpToDataIndex`의 `onComplete`를 잃어버립니다.
+- 루프 재중심, 앵커 복원, 증분 변경, 크기 보정, 채팅 기능은 모두 드래그 중에도 안전한 `ShiftScrollPosition` 하나에 의존합니다. 조사 때 짚은 v0.1의 잠재 버그 두 개는 v0.1.0에서 해결됨 상태이며 회귀 테스트가 있습니다.
+  - 드래그 중에 `RelayoutKeepingPosition`이 실행되면 드래그 기준점이 갱신되지 않아 콘텐츠가 튀던 문제: v0.1.0에서 해결됨 (`Relayout_MidDrag_ContentDoesNotJump`). 가장자리 너머로 당긴(Elastic) 구간에서 위치가 범위로 잘리던 남은 경우는 ①에서 해결 (`Relayout_MidDragPastTopEdge_KeepsPullAndRubberBand` 등)
+  - 재배치할 때 `CancelTween`이 실행 중인 `JumpToDataIndex`의 `onComplete`를 잃어버리던 문제: v0.1.0에서 해결됨 (`Relayout_DuringJumpTween_FinishesAtNewTargetAndInvokesCallback`)
 - v0.2의 주제는 "데이터가 바뀌어도 위치와 셀 상태를 지킨다"입니다. v0.1에서 범위 밖으로 둔 그리드, 중첩 제스처, 자동 크기 측정은 v0.3 이후로 미룹니다. v0.2 묶음에는 새 MonoBehaviour가 없고, partial 파일과 일반 C# 타입만 추가합니다.
 - 소스 사이에서 충돌한 기술 판단은 다음과 같이 정했습니다.
   - ID는 `long ItemId`로 둡니다(Key가 아님). payload는 object 대신 int 비트마스크로 둡니다.
@@ -89,7 +89,7 @@ internal void ShiftScrollPosition(float delta);
 
 // Tests/Runtime
 [UnityTest] public IEnumerator Shift_MidDrag_ReleaseVelocityMatchesUnshifted();
-[UnityTest] public IEnumerator Relayout_MidDrag_ContentDoesNotJump();   // v0.1 잠재 버그
+[UnityTest] public IEnumerator Relayout_MidDrag_ContentDoesNotJump();   // v0.1.0에서 해결됨 (이미 있는 회귀 테스트)
 [Test] public void ScrollSweep_AfterWarmup_DoesNotAllocate()
     => Assert.That(() => _scroller.ScrollPosition += 37f, Is.Not.AllocatingGCMemory());
 private static readonly ProfilerMarker s_UpdateActiveRangeMarker = new("CyScroller.UpdateActiveRange");
