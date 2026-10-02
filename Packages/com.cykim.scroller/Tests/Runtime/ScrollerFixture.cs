@@ -14,6 +14,9 @@ namespace CyKim.Scroller.Tests
         public int AltEvery;
         public int GetCellViewCalls;
 
+        /// <summary>바인딩을 마친 뒤(반환 직전) 불린다. 델리게이트 안의 사용자 코드를 흉내 낸다.</summary>
+        public Action<CyScroller, int> GetCellViewHook;
+
         public int GetNumberOfCells(CyScroller scroller) => Sizes.Length;
 
         public float GetCellViewSize(CyScroller scroller, int dataIndex) => Sizes[dataIndex];
@@ -24,6 +27,8 @@ namespace CyKim.Scroller.Tests
             CyScrollerCellView prefab = AltPrefab != null && AltEvery > 0 && dataIndex % AltEvery == 0 ? AltPrefab : Prefab;
             var view = (TestCellView)scroller.GetCellView(prefab);
             view.BoundData = dataIndex;
+            view.BoundVersion = view.BindVersion;
+            GetCellViewHook?.Invoke(scroller, dataIndex);
             return view;
         }
 
