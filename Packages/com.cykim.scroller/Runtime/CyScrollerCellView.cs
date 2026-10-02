@@ -29,6 +29,16 @@ namespace CyKim.Scroller
         /// <summary>스크롤 시퀀스 슬롯 번호. 루프 모드에서는 <see cref="DataIndex"/>와 다르다. 풀에 있으면 -1.</summary>
         public int CellIndex { get; internal set; } = -1;
 
+        /// <summary>
+        /// 바인딩된 항목의 안정 ID (델리게이트가 <see cref="ICyScrollerItemIdProvider"/>를 구현할 때). <see cref="HasItemId"/>가 false면 0.
+        /// 바인딩할 때 채워지고(<see cref="CyScroller.GetCellView"/>로 받은 뷰는 델리게이트 <see cref="ICyScrollerDelegate.GetCellView"/> 안에서 이미 들어 있다),
+        /// 바인딩이 풀리면(회수, <see cref="CyScroller.ClearActive"/>로 파괴) 지워진다. 마지막으로 델리게이트를 다시 받을 때 받은 ID다.
+        /// </summary>
+        public long ItemId { get; internal set; }
+
+        /// <summary><see cref="ItemId"/>가 유효한지. 델리게이트가 ID를 주지 않거나 바인딩이 풀린 뷰는 false.</summary>
+        public bool HasItemId { get; internal set; }
+
         /// <summary>현재 활성 범위에 있어 화면(또는 미리보기 구간)에 배치돼 있는지.</summary>
         public bool Active { get; internal set; }
 

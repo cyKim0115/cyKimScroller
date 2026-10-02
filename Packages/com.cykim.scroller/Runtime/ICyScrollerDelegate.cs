@@ -10,7 +10,7 @@ namespace CyKim.Scroller
 
         /// <summary>
         /// 스크롤 축 방향 셀 크기 (세로면 높이, 가로면 너비). 셀마다 달라도 된다.
-        /// <see cref="CyScroller.ReloadData"/> 때만 호출되므로 크기가 바뀌면 다시 로드한다.
+        /// <see cref="CyScroller.ReloadData()"/>·<see cref="CyScroller.ReloadDataKeepingPosition"/> 때만 호출되므로 크기가 바뀌면 다시 로드한다.
         /// </summary>
         float GetCellViewSize(CyScroller scroller, int dataIndex);
 

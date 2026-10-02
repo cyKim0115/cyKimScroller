@@ -94,7 +94,7 @@ namespace CyKim.Scroller
         /// <param name="tweenTime">이동 시간(초, unscaled).</param>
         /// <param name="jumpComplete">
         /// 이동이 끝나면 호출된다. 트윈 중 재배치가 일어나도 새 배치의 목표까지 간 뒤 한 번 호출된다.
-        /// 사용자 입력·<see cref="InterruptTween"/>·<see cref="ReloadData"/>로 중단되면 호출되지 않는다.
+        /// 사용자 입력·<see cref="InterruptTween"/>·<see cref="ReloadData()"/>로 중단되면 호출되지 않는다.
         /// </param>
         /// <param name="loopJumpDirection">루프 모드에서 어느 사본으로 갈지.</param>
         public void JumpToDataIndex(
@@ -136,7 +136,7 @@ namespace CyKim.Scroller
         /// <param name="tweenType">이동 곡선. <see cref="TweenType.Immediate"/>면 바로 이동한다.</param>
         /// <param name="tweenTime">이동 시간(초, unscaled).</param>
         /// <param name="onComplete">
-        /// 이동이 끝나면(움직일 필요가 없으면 바로) 호출된다. 사용자 입력·<see cref="InterruptTween"/>·<see cref="ReloadData"/>로 중단되면 호출되지 않는다.
+        /// 이동이 끝나면(움직일 필요가 없으면 바로) 호출된다. 사용자 입력·<see cref="InterruptTween"/>·<see cref="ReloadData()"/>로 중단되면 호출되지 않는다.
         /// </param>
         /// <param name="loopJumpDirection">
         /// 루프 모드에서 이동할 사본. Nearest의 Closest는 앞쪽 사본 Start와 뒤쪽 사본 End 중 덜 움직이는 쪽,
@@ -234,8 +234,13 @@ namespace CyKim.Scroller
         }
 
         /// <summary>현재 위치에서 가장 가까운 셀로 스냅 설정에 따라 이동한다. 스냅이 꺼져 있어도 동작한다.</summary>
+        /// <remarks>
+        /// 점프처럼 새 이동 요청이므로 적용을 기다리는 앵커(<see cref="RestoreAnchor"/>)는 맞출 셀이 없어도(빈 목록·로드 전) 버린다.
+        /// 드래그·휠 뒤 자동 스냅은 보관한 앵커가 있는 동안 기다리므로 앵커를 버리지 않는다.
+        /// </remarks>
         public void Snap()
         {
+            _hasPendingAnchor = false;
             if (!_hasLoaded || _layout.SlotCount == 0)
             {
                 return;
@@ -304,8 +309,8 @@ namespace CyKim.Scroller
         }
 
         /// <summary>
-        /// 점프·ScrollIntoView 공통 준비. 로드 전이면 로드하고 미뤄 둔 작업을 처리한다.
-        /// 데이터가 없으면 완료 콜백을 바로 부르고 false를 돌려준다.
+        /// 점프·ScrollIntoView 공통 준비. 적용을 기다리는 앵커는 새 이동 요청이 대신하므로 버린다.
+        /// 로드 전이면 로드하고 미뤄 둔 작업을 처리한다. 데이터가 없으면 완료 콜백을 바로 부르고 false를 돌려준다.
         /// </summary>
         private bool PrepareProgrammaticMove(Action onComplete)
         {
@@ -313,6 +318,8 @@ namespace CyKim.Scroller
             {
                 return false;
             }
+
+            _hasPendingAnchor = false;
 
             if (!_hasLoaded && !_reloadPending)
             {
@@ -520,6 +527,8 @@ namespace CyKim.Scroller
             CancelTween();
             _scrollRect.StopMovement();
 
+            // 정렬·트윈이 살아 있는 동안에는 적용을 기다리는 앵커가 없다 (새 이동이 대신한다).
+            _hasPendingAnchor = false;
             _alignmentActive = true;
             _align = request;
 
@@ -842,7 +851,9 @@ namespace CyKim.Scroller
 
         private void UpdateSnap(float deltaTime)
         {
-            if (!_snapping || !_snapArmed || _dragging)
+            // 보관한 앵커가 있으면(데이터·뷰포트가 준비되기 전) 기다린다. 사용자 입력 뒤 자동 스냅이 코드로 요청한 복원을 버리지 않게 하고,
+            // 앵커를 적용할 때 스냅 대기도 풀린다 (MoveToPendingAnchor).
+            if (!_snapping || !_snapArmed || _dragging || _hasPendingAnchor)
             {
                 return;
             }
