@@ -31,6 +31,9 @@ namespace CyKim.Scroller
         // 잘못된 셀 크기(대부분 0) 때문에 한 프레임에 셀 수만 개를 만드는 일을 막는 상한.
         private const int MAX_ACTIVE_CELLS = 2048;
 
+        // 범위 갱신 콜백이 콘텐츠를 옮겼을 때 지금 위치로 범위를 다시 맞추는 최대 횟수. 콜백이 매번 다시 옮기는 경우를 끊는다.
+        internal const int MAX_RANGE_PASSES = 4;
+
         // Profiler에서 보이는 구간. Auto()는 구조체 스코프라 할당하지 않는다.
         private static readonly ProfilerMarker _updateActiveRangeMarker = new ProfilerMarker("CyScroller.UpdateActiveRange");
         private static readonly ProfilerMarker _relayoutMarker = new ProfilerMarker("CyScroller.Relayout");
@@ -78,6 +81,12 @@ namespace CyKim.Scroller
         [Tooltip("TweenType.Custom에 쓰는 곡선.")]
         [SerializeField] private AnimationCurve _customTweenCurve = AnimationCurve.EaseInOut(0f, 0f, 1f, 1f);
 
+        [Header("Cell Hooks")]
+        [Tooltip("켜면 위치·범위·레이아웃·뷰포트 크기가 바뀐 프레임에 활성 셀마다 OnViewportPositionChanged를 부른다.")]
+        [SerializeField] private bool _notifyCellPositions;
+        [Tooltip("셀 위치를 잴 셀 안의 지점. 0 = 앞, 0.5 = 가운데, 1 = 뒤.")]
+        [SerializeField, Range(0f, 1f)] private float _cellPositionPivot = 0.5f;
+
         private readonly CyScrollerLayout _layout = new CyScrollerLayout();
         private readonly List<CyScrollerCellView> _activeCells = new List<CyScrollerCellView>(32);
         private readonly Dictionary<string, List<CyScrollerCellView>> _pools = new Dictionary<string, List<CyScrollerCellView>>();
@@ -92,6 +101,9 @@ namespace CyKim.Scroller
         private bool _hasLoaded;
         private bool _inRangeUpdate;
         private bool _inValueChanged;
+
+        // 범위 갱신 콜백이 매번 콘텐츠를 옮겨 다시 맞추기를 멈췄다. 다음 LateUpdate에 지금 위치로 다시 맞춘다.
+        private bool _rangeRetryPending;
         private bool _listening;
         private bool _isScrolling;
         private bool _warnedEmptyIdentifier;
@@ -124,11 +136,39 @@ namespace CyKim.Scroller
 
         #region Events
 
+        /// <summary>
+        /// 셀 뷰가 활성화되거나(lookAhead 미리보기 구간 포함) 재활용될 때. 실제 뷰포트 기준은 <see cref="CellViewWillDisplay"/>·<see cref="CellViewDidEndDisplay"/>.
+        /// </summary>
         public event CellViewVisibilityChangedHandler CellViewVisibilityChanged;
+
+        /// <summary>
+        /// 셀 뷰가 실제 뷰포트(lookAhead 구간 제외)에 조금이라도 걸치기 시작할 때. 셀이 활성화된 뒤에 오고,
+        /// 같은 셀에 <see cref="CellViewDidEndDisplay"/>와 항상 짝을 이룬다 (스크롤러 자체가 파괴될 때만 예외).
+        /// 루프 순환 보정(같은 데이터로 슬롯 번호만 이동)에는 오지 않는다.
+        /// </summary>
+        public event CellViewDisplayChangedHandler CellViewWillDisplay;
+
+        /// <summary>
+        /// 셀 뷰가 실제 뷰포트에서 완전히 벗어나거나, 보이던 채로 재활용되거나 <see cref="ClearActive"/>로 파괴될 때(<see cref="ReloadData"/>·재배치 등).
+        /// 재활용 이벤트(<see cref="CellViewWillRecycle"/>)보다 먼저 온다.
+        /// 스크롤러 자체가 파괴될 때는 사용자 코드를 부르지 않으므로 오지 않는다 (<see cref="CyScrollerCellView.IsDisplayed"/>가 마지막 값으로 남는다).
+        /// </summary>
+        public event CellViewDisplayChangedHandler CellViewDidEndDisplay;
+
+        /// <summary>
+        /// <see cref="NotifyCellPositions"/>가 켜져 있을 때 셀 뷰의 뷰포트 안 위치. <see cref="CyScrollerCellView.OnViewportPositionChanged"/> 바로 앞에 같은 값으로 온다.
+        /// </summary>
+        public event CellViewPositionChangedHandler CellViewPositionChanged;
+
         public event CellViewInstantiatedHandler CellViewInstantiated;
         public event CellViewReusedHandler CellViewReused;
         public event CellViewWillRecycleHandler CellViewWillRecycle;
         public event ScrollerScrolledHandler ScrollerScrolled;
+
+        /// <summary>
+        /// 스냅이 끝났을 때. cellIndex는 루프 순환 보정 뒤 슬롯이고, cellView는 그 슬롯의 활성 셀 뷰다(없으면 null).
+        /// 범위 갱신 콜백(셀 이벤트·델리게이트 등) 안에서 끝난 스냅은 범위 갱신이 끝난 뒤(미룬 순환 보정과 새 위치의 셀 활성화 뒤) 온다.
+        /// </summary>
         public event ScrollerSnappedHandler ScrollerSnapped;
         public event ScrollerScrollingChangedHandler ScrollerScrollingChanged;
         public event ScrollerTweeningChangedHandler ScrollerTweeningChanged;
@@ -312,6 +352,45 @@ namespace CyKim.Scroller
         {
             get => _customTweenCurve;
             set => _customTweenCurve = value;
+        }
+
+        /// <summary>
+        /// 켜면 위치·활성 범위·레이아웃·뷰포트 크기가 바뀐 프레임에 한 번(LateUpdate 끝) 활성 셀마다
+        /// <see cref="CyScrollerCellView.OnViewportPositionChanged"/>와 <see cref="CellViewPositionChanged"/>를 부른다.
+        /// 새로 활성화된 셀은 활성화 즉시 받는다. 끄면 위치 계산을 아예 건너뛴다.
+        /// </summary>
+        public bool NotifyCellPositions
+        {
+            get => _notifyCellPositions;
+            set
+            {
+                if (_notifyCellPositions == value)
+                {
+                    return;
+                }
+
+                _notifyCellPositions = value;
+
+                // 꺼져 있던 동안 바뀐 위치를 다음 LateUpdate에 모든 활성 셀에 알린다.
+                _cellPositionsDirty |= value;
+            }
+        }
+
+        /// <summary>셀 위치를 잴 셀 안의 지점 (0~1). 0 = 앞, 0.5 = 가운데, 1 = 뒤.</summary>
+        public float CellPositionPivot
+        {
+            get => _cellPositionPivot;
+            set
+            {
+                value = Mathf.Clamp01(value);
+                if (_cellPositionPivot == value)
+                {
+                    return;
+                }
+
+                _cellPositionPivot = value;
+                _cellPositionsDirty = true;
+            }
         }
 
         public ScrollRect ScrollRect
@@ -504,6 +583,21 @@ namespace CyKim.Scroller
             SetScrolling(false);
         }
 
+        private void OnDestroy()
+        {
+            // 함께 파괴되는 활성 셀의 바인딩을 푼다. 늦게 끝난 비동기 작업이 BindVersion을 비교해 결과를 버리게 한다.
+            // 파괴 순서가 정해져 있지 않으므로 사용자 코드(표시 끝 이벤트·OnBecameHidden)는 부르지 않고 IsDisplayed는 마지막 값으로 둔다.
+            // 이미 파괴된 셀(Unity null)도 관리 쪽 값만 바꾸므로 참조로 확인한다.
+            for (int i = 0; i < _activeCells.Count; i++)
+            {
+                CyScrollerCellView cell = _activeCells[i];
+                if (!ReferenceEquals(cell, null))
+                {
+                    UnbindCell(cell);
+                }
+            }
+        }
+
         private void OnValidate()
         {
             if (!Application.isPlaying || !_hasLoaded)
@@ -528,6 +622,13 @@ namespace CyKim.Scroller
 
             CheckViewportResize();
 
+            if (_rangeRetryPending)
+            {
+                // 범위 갱신 콜백이 매번 콘텐츠를 옮겨 다시 맞추기를 멈췄다. 이번 프레임 위치로 다시 맞춘다
+                // (ScrollRect 스크롤 이벤트 안이었으면 ScrollRect가 콜백이 옮긴 위치를 직전 위치로 저장하므로 다음 스크롤 이벤트가 오지 않는다).
+                UpdateActiveRange();
+            }
+
             float deltaTime = Time.unscaledDeltaTime;
             if (_tweening)
             {
@@ -540,6 +641,9 @@ namespace CyKim.Scroller
             }
 
             SetScrolling(_dragging || LinearVelocity != 0f);
+
+            // 이번 프레임의 드래그·관성·트윈이 모두 반영된 뒤 셀 위치를 한 번 알린다.
+            NotifyCellPositionsIfChanged();
         }
 
         #endregion
@@ -567,6 +671,9 @@ namespace CyKim.Scroller
                 _pendingReloadFactor = scrollPositionFactor;
                 return;
             }
+
+            // 범위 갱신 콜백 안에서 끝난 스냅이 아직 알려지지 않았으면 배치를 다시 만들기 전에 알린다.
+            RaisePendingSnapEvent();
 
             _reloadPending = false;
             _relayoutPending = false;
@@ -711,6 +818,7 @@ namespace CyKim.Scroller
 
         /// <summary>
         /// 활성 셀을 파괴한다. 셀 프리팹을 바꾼 뒤 <see cref="ReloadData"/>와 함께 쓴다.
+        /// 보이던 셀은 파괴 전에 <see cref="CellViewDidEndDisplay"/>를 받는다. 파괴할 셀은 바인딩을 푼다(<see cref="CyScrollerCellView.IsBound"/> false).
         /// 델리게이트·이벤트 콜백 안에서 부르면 범위 갱신이 끝난 뒤 처리한다.
         /// </summary>
         public void ClearActive()
@@ -721,12 +829,14 @@ namespace CyKim.Scroller
                 return;
             }
 
+            EndDisplayAll();
+
             for (int i = 0; i < _activeCells.Count; i++)
             {
                 CyScrollerCellView cell = _activeCells[i];
                 if (cell != null)
                 {
-                    cell.Active = false;
+                    UnbindCell(cell);
                     Destroy(cell.gameObject);
                 }
             }
@@ -977,6 +1087,7 @@ namespace CyKim.Scroller
 
             GetMainAxisPadding(out float paddingBefore, out float paddingAfter);
             _layout.Build(_spacing, paddingBefore, paddingAfter, _loop, ScrollRectSize, _lookAheadBefore, _lookAheadAfter);
+            _cellPositionsDirty = true;
 
             _content.SetSizeWithCurrentAnchors(
                 IsVertical ? RectTransform.Axis.Vertical : RectTransform.Axis.Horizontal,
@@ -1048,6 +1159,9 @@ namespace CyKim.Scroller
         /// </remarks>
         private void ApplyRelayout(bool requeryDelegate, bool reconfigure)
         {
+            // 범위 갱신 콜백 안에서 끝난 스냅이 아직 알려지지 않았으면 슬롯 번호가 바뀌기 전에 알린다.
+            RaisePendingSnapEvent();
+
             // 회수 콜백(셀 이벤트·OnRecycled)이 트윈·정렬·위치를 바꿨어도 바뀐 상태로 처리하도록 셀부터 회수한 뒤 상태를 읽는다.
             RecycleAllActive();
 
@@ -1351,13 +1465,79 @@ namespace CyKim.Scroller
             }
         }
 
-        /// <summary>현재 위치에 맞게 활성 슬롯 범위를 맞춘다. 나가는 셀을 먼저 회수하고 들어오는 셀을 받는다.</summary>
+        /// <summary>
+        /// 현재 위치에 맞게 활성 슬롯 범위와 표시 범위(실제 뷰포트)를 맞춘다. 표시 끝 → 회수 → 활성화 → 표시 시작 순서다.
+        /// 활성 범위가 그대로여도 미리보기 구간 셀이 뷰포트에 드나들면 표시 범위만 바꾼다.
+        /// </summary>
+        /// <remarks>
+        /// 콜백(델리게이트·셀 이벤트·셀 뷰 가상 메서드)이 콘텐츠를 옮기면(즉시 점프·<see cref="ScrollPosition"/> 대입 등) 옛 위치 기준의 남은 작업을 멈추고
+        /// 지금 위치에서 다시 맞춘다. 콜백 안에서는 루프 순환 보정(슬롯 번호 이동)을 하지 않고 다시 맞추기 직전에 한다(<see cref="RecenterLoopIfNeeded"/>).
+        /// 그래서 범위 계산 도중 슬롯 번호가 바뀌지 않고, 한 번에 활성화하는 셀은 매번 <see cref="MAX_ACTIVE_CELLS"/> 안이다.
+        /// 콜백이 매번 다시 옮기면 <see cref="MAX_RANGE_PASSES"/>번에서 멈추고 다음 LateUpdate에 다시 맞춘다.
+        /// 콜백 안에서 끝난 스냅은 여기서 범위를 다 맞춘 뒤 알린다(<see cref="RaiseSnapEventAfterRangeUpdate"/>). 할당 없음.
+        /// </remarks>
         private void ApplyActiveRange()
         {
-            float position = ScrollPosition;
+            _rangeRetryPending = false;
+            for (int pass = 0; pass < MAX_RANGE_PASSES; pass++)
+            {
+                if (_recenterDeferred)
+                {
+                    // 콜백 안에서 미룬 순환 보정. 범위 갱신 밖이므로 이제 슬롯 번호를 옮겨도 된다.
+                    _recenterDeferred = false;
+                    RecenterLoopIfNeeded();
+                }
+
+                float position = ScrollPosition;
+                ApplyActiveRangeAt(position);
+
+                // 콜백이 콘텐츠를 옮기지 않았고 순환 보정도 미루지 않았으면 끝이다.
+                // 미뤄 둔 리로드·재배치가 있으면 그쪽이 새 배치로 범위를 다시 만드므로, 옛 배치로 (새) 델리게이트를 부르지 않게 여기서 멈춘다.
+                if ((!HasMovedFrom(position) && !_recenterDeferred) || _reloadPending || _relayoutPending)
+                {
+                    RaiseSnapEventAfterRangeUpdate();
+                    return;
+                }
+            }
+
+            _rangeRetryPending = true;
+            RaiseSnapEventAfterRangeUpdate();
+        }
+
+        /// <summary>
+        /// 범위 갱신을 마칠 때 콜백 안에서 끝난 스냅을 알린다. 상한·리로드 대기로 멈춰 콜백이 미룬 순환 보정이 남았으면
+        /// 먼저 끝내 슬롯 번호를 순환 보정 뒤로 맞춘다 (범위는 다음 갱신이 맞춘다).
+        /// </summary>
+        private void RaiseSnapEventAfterRangeUpdate()
+        {
+            if (!_snapEventPending)
+            {
+                return;
+            }
+
+            if (_recenterDeferred)
+            {
+                _recenterDeferred = false;
+                RecenterLoopIfNeeded();
+            }
+
+            // 순환 보정이 셀을 모두 회수하며 부른 콜백 안에서 범위를 다시 갱신했으면 이미 알렸다 (RaisePendingSnapEvent가 다시 확인한다).
+            RaisePendingSnapEvent();
+        }
+
+        /// <summary>범위 갱신을 시작한 위치에서 콘텐츠가 옮겨졌는지 (콜백 안의 즉시 점프·<see cref="ScrollPosition"/> 대입 등).</summary>
+        private bool HasMovedFrom(float position) => ScrollPosition != position;
+
+        /// <summary>
+        /// position 기준으로 활성 범위와 표시 범위를 한 번 맞춘다. 콜백이 콘텐츠를 옮기면 옛 위치 기준의 남은 단계를 건너뛴다
+        /// (호출자가 새 위치로 다시 맞춘다).
+        /// </summary>
+        private void ApplyActiveRangeAt(float position)
+        {
+            float viewportSize = ScrollRectSize;
             _layout.GetSlotRange(
                 position - _lookAheadBefore,
-                position + ScrollRectSize + _lookAheadAfter,
+                position + viewportSize + _lookAheadAfter,
                 out int first,
                 out int last);
 
@@ -1371,7 +1551,10 @@ namespace CyKim.Scroller
                 }
             }
 
-            if (first == _activeFirst && last == _activeLast)
+            GetVisibleSlotRange(position, viewportSize, first, last, out int visibleFirst, out int visibleLast);
+
+            bool activeChanged = first != _activeFirst || last != _activeLast;
+            if (!activeChanged && IsSameRange(visibleFirst, visibleLast, _visibleFirst, _visibleLast))
             {
                 return;
             }
@@ -1379,57 +1562,23 @@ namespace CyKim.Scroller
             _inRangeUpdate = true;
             try
             {
-                bool hasNew = first <= last;
-                bool overlaps = HasActiveRange && hasNew && last >= _activeFirst && first <= _activeLast;
-
-                // 목록·범위 카운터를 먼저 맞춘 뒤 사용자 코드(이벤트·OnRecycled)를 호출한다.
-                // 사용자 코드가 예외를 던져도 _activeCells와 [_activeFirst, _activeLast]가 어긋나지 않는다.
-                if (!overlaps)
+                // 벗어나는 셀의 표시 끝은 회수보다 먼저, 들어오는 셀의 표시 시작은 활성화한 뒤에 알린다.
+                // 각 단계는 콜백이 콘텐츠를 옮기면 false를 돌려주고, 그러면 옛 위치 기준의 남은 단계는 건너뛴다.
+                if (!ShrinkVisibleRange(visibleFirst, visibleLast, position))
                 {
-                    RecycleAllActive();
-                    if (hasNew)
-                    {
-                        _activeFirst = first;
-                        _activeLast = first - 1;
-                        while (_activeLast < last)
-                        {
-                            CyScrollerCellView added = ActivateSlot(_activeLast + 1, false);
-                            _activeLast++;
-                            NotifyShown(added);
-                        }
-                    }
-
                     return;
                 }
 
-                // 나가는 셀을 먼저 풀에 돌려야 들어오는 셀이 재사용할 수 있다.
-                while (_activeFirst < first)
+                if (activeChanged)
                 {
-                    CyScrollerCellView removed = TakeActiveAt(0);
-                    _activeFirst++;
-                    RecycleCell(removed);
+                    _cellPositionsDirty = true;
+                    if (!ApplyActiveSlots(first, last, position))
+                    {
+                        return;
+                    }
                 }
 
-                while (_activeLast > last)
-                {
-                    CyScrollerCellView removed = TakeActiveAt(_activeCells.Count - 1);
-                    _activeLast--;
-                    RecycleCell(removed);
-                }
-
-                while (_activeFirst > first)
-                {
-                    CyScrollerCellView added = ActivateSlot(_activeFirst - 1, true);
-                    _activeFirst--;
-                    NotifyShown(added);
-                }
-
-                while (_activeLast < last)
-                {
-                    CyScrollerCellView added = ActivateSlot(_activeLast + 1, false);
-                    _activeLast++;
-                    NotifyShown(added);
-                }
+                GrowVisibleRange(visibleFirst, visibleLast, position);
             }
             finally
             {
@@ -1437,11 +1586,136 @@ namespace CyKim.Scroller
             }
         }
 
+        /// <summary>
+        /// 활성 슬롯 범위를 [first, last]로 맞춘다. 나가는 셀을 먼저 회수하고 들어오는 셀을 받는다.
+        /// 콜백이 콘텐츠를 position에서 옮기면 옛 위치 기준의 남은 회수·활성화를 멈추고 false를 돌려준다.
+        /// </summary>
+        private bool ApplyActiveSlots(int first, int last, float position)
+        {
+            bool hasNew = first <= last;
+            bool overlaps = HasActiveRange && hasNew && last >= _activeFirst && first <= _activeLast;
+
+            // 목록·범위 카운터를 먼저 맞춘 뒤 사용자 코드(이벤트·OnRecycled)를 호출한다.
+            // 사용자 코드가 예외를 던지거나 도중에 멈춰도 _activeCells와 [_activeFirst, _activeLast]가 어긋나지 않는다.
+            if (!overlaps)
+            {
+                RecycleAllActive();
+                if (HasMovedFrom(position))
+                {
+                    return false;
+                }
+
+                if (hasNew)
+                {
+                    _activeFirst = first;
+                    _activeLast = first - 1;
+                    while (_activeLast < last)
+                    {
+                        CyScrollerCellView added = ActivateSlot(_activeLast + 1, false);
+                        _activeLast++;
+                        NotifyShown(added);
+                        if (HasMovedFrom(position))
+                        {
+                            return false;
+                        }
+                    }
+                }
+
+                return true;
+            }
+
+            // 나가는 셀을 먼저 풀에 돌려야 들어오는 셀이 재사용할 수 있다.
+            // 표시 범위는 이미 새 범위 안으로 줄였으므로 나가는 셀은 보통 보이지 않는다. 그래도 보이는 셀을 빼야 하면
+            // 표시 끝을 먼저 알리고 상태를 다시 읽는다 (표시 범위 ⊆ 활성 범위 유지).
+            while (_activeFirst < first && HasActiveRange)
+            {
+                if (HasVisibleRange && _visibleFirst == _activeFirst)
+                {
+                    _visibleFirst++;
+                    EndDisplayAt(_activeFirst);
+                }
+                else
+                {
+                    CyScrollerCellView removed = TakeActiveAt(0);
+                    _activeFirst++;
+                    RecycleCell(removed);
+                }
+
+                if (HasMovedFrom(position))
+                {
+                    return false;
+                }
+            }
+
+            while (_activeLast > last && HasActiveRange)
+            {
+                if (HasVisibleRange && _visibleLast == _activeLast)
+                {
+                    _visibleLast--;
+                    EndDisplayAt(_activeLast);
+                }
+                else
+                {
+                    CyScrollerCellView removed = TakeActiveAt(_activeCells.Count - 1);
+                    _activeLast--;
+                    RecycleCell(removed);
+                }
+
+                if (HasMovedFrom(position))
+                {
+                    return false;
+                }
+            }
+
+            // 겹치는 범위는 회수로 비지 않는다 (순환 보정은 범위 갱신 뒤로 미루므로 콜백이 슬롯 번호를 바꾸지 못한다).
+            // 그래도 비었으면 옛 번호에서 이어 채우지 않고 새 범위 처음부터 채워 활성화 수를 상한 안에 둔다.
+            if (!HasActiveRange)
+            {
+                _activeFirst = first;
+                _activeLast = first - 1;
+            }
+
+            while (_activeFirst > first)
+            {
+                CyScrollerCellView added = ActivateSlot(_activeFirst - 1, true);
+                _activeFirst--;
+                NotifyShown(added);
+                if (HasMovedFrom(position))
+                {
+                    return false;
+                }
+            }
+
+            while (_activeLast < last)
+            {
+                CyScrollerCellView added = ActivateSlot(_activeLast + 1, false);
+                _activeLast++;
+                NotifyShown(added);
+                if (HasMovedFrom(position))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// 새로 활성화된 셀을 알린다. 위치 훅이 켜져 있으면 렌더 전에 첫 위치도 바로 준다
+        /// (다음 LateUpdate까지 기다리면 재사용된 뷰가 이전 데이터 자리의 모습으로 한 프레임 보일 수 있다).
+        /// </summary>
         private void NotifyShown(CyScrollerCellView cell)
         {
-            if (cell != null)
+            if (cell == null)
             {
-                CellViewVisibilityChanged?.Invoke(cell);
+                return;
+            }
+
+            CellViewVisibilityChanged?.Invoke(cell);
+
+            if (_notifyCellPositions && cell.Active)
+            {
+                NotifyCellPosition(cell, ScrollPosition, ScrollRectSize);
             }
         }
 
@@ -1455,9 +1729,12 @@ namespace CyKim.Scroller
 
             _pendingDataIndex = dataIndex;
             _pendingCellIndex = slot;
+            _pendingBoundCell = null;
             CyScrollerCellView cell = _delegate != null ? _delegate.GetCellView(this, dataIndex, slot) : null;
+            CyScrollerCellView boundCell = _pendingBoundCell;
             _pendingDataIndex = -1;
             _pendingCellIndex = -1;
+            _pendingBoundCell = null;
 
             if (cell != null && cell.Active)
             {
@@ -1475,6 +1752,12 @@ namespace CyKim.Scroller
                 // 슬롯과 목록 인덱스 대응을 유지하려고 빈 자리를 넣는다.
                 InsertActive(null, atFront);
                 return null;
+            }
+
+            // GetCellView(prefab)로 받지 않은 뷰(델리게이트가 직접 만든 뷰 등)도 이번 바인딩으로 센다.
+            if (cell != boundCell)
+            {
+                cell.BindVersion++;
             }
 
             cell.Scroller = this;
@@ -1553,6 +1836,10 @@ namespace CyKim.Scroller
             }
         }
 
+        /// <summary>
+        /// 활성 셀의 슬롯 번호를 slotDelta만큼 옮긴다 (루프 순환 보정). 범위 갱신 중에는 부르지 않는다
+        /// (진행 중인 범위 계산이 옛 번호를 쓰므로 <see cref="RecenterLoopIfNeeded"/>가 미룬다).
+        /// </summary>
         private void ShiftActiveSlots(int slotDelta)
         {
             if (!HasActiveRange || slotDelta == 0)
@@ -1569,8 +1856,15 @@ namespace CyKim.Scroller
                 return;
             }
 
+            // 같은 셀이 슬롯 번호만 바뀌므로 표시 범위도 같이 옮기고 표시 이벤트는 내지 않는다.
             _activeFirst = first;
             _activeLast = last;
+            if (HasVisibleRange)
+            {
+                _visibleFirst += slotDelta;
+                _visibleLast += slotDelta;
+            }
+
             for (int i = 0; i < _activeCells.Count; i++)
             {
                 CyScrollerCellView cell = _activeCells[i];
@@ -1586,12 +1880,18 @@ namespace CyKim.Scroller
 
         private void RecycleAllActive()
         {
+            // 보이던 셀의 표시 끝을 먼저 알린다.
+            EndDisplayAll();
+
             // 뒤에서부터 목록·카운터를 줄인 뒤 회수한다. 사용자 코드가 예외를 던져도 같은 셀을 두 번 회수하지 않는다.
             while (_activeCells.Count > 0)
             {
                 CyScrollerCellView cell = TakeActiveAt(_activeCells.Count - 1);
                 _activeLast--;
                 RecycleCell(cell);
+
+                // 회수 콜백 안의 리로드가 새 셀을 보였으면 그 셀도 회수하기 전에 표시 끝을 알린다. 비었으면 O(1).
+                EndDisplayAll();
             }
 
             _activeFirst = 0;
@@ -1622,14 +1922,21 @@ namespace CyKim.Scroller
             finally
             {
                 // 사용자 코드가 예외를 던져도 셀은 반드시 꺼서 풀에 넣는다 (보이는 채로 새지 않게).
-                cell.Active = false;
-                cell.DataIndex = -1;
-                cell.CellIndex = -1;
+                UnbindCell(cell);
 
                 // 재부모화 없이 content 아래에서 끄기만 한다 (SetParent·레이아웃 dirty 비용 회피).
                 cell.gameObject.SetActive(false);
                 GetPool(cell.CellIdentifier).Add(cell);
             }
+        }
+
+        /// <summary>셀의 바인딩을 푼다. 바인딩 버전을 올려 늦게 끝난 비동기 작업이 결과를 버리게 한다.</summary>
+        private static void UnbindCell(CyScrollerCellView cell)
+        {
+            cell.Active = false;
+            cell.DataIndex = -1;
+            cell.CellIndex = -1;
+            cell.BindVersion++;
         }
 
         private CyScrollerCellView PopRecycled(string identifier)
@@ -1670,6 +1977,13 @@ namespace CyKim.Scroller
             cell.Scroller = this;
             cell.DataIndex = _pendingDataIndex;
             cell.CellIndex = _pendingCellIndex;
+
+            if (_pendingDataIndex >= 0)
+            {
+                // 델리게이트가 이 뒤에 데이터를 채우므로 여기서 올려야 바인딩 코드가 읽는 값이 이번 바인딩의 값이다.
+                cell.BindVersion++;
+                _pendingBoundCell = cell;
+            }
         }
 
         private void SetScrolling(bool scrolling)

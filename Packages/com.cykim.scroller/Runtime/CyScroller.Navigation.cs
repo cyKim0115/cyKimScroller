@@ -67,6 +67,15 @@ namespace CyKim.Scroller
 
         private bool _ignoreLoopJump;
 
+        // 범위 갱신 콜백 안에서 순환 보정이 필요했는지. 그 안에서는 슬롯 번호를 옮기지 않고, 범위를 다시 맞추기 직전에 보정한다.
+        private bool _recenterDeferred;
+
+        // 범위 갱신 콜백 안에서 끝난 스냅의 ScrollerSnapped. 순환 보정과 새 위치의 셀 활성화가 콜백 뒤로 미뤄지므로 범위 갱신이 끝난 뒤 보낸다.
+        // 슬롯은 그 사이 순환 보정만큼 같이 옮긴다. 같은 범위 갱신에서 여러 번 끝나면 마지막 스냅만 알린다.
+        private bool _snapEventPending;
+        private int _snapEventSlot;
+        private int _snapEventDataIndex;
+
         // 점프·스냅·ScrollIntoView로 맞춘 정렬. 트윈 중에는 트윈 목표이고(트윈 중이면 항상 활성),
         // 끝난 뒤에는 사용자가 움직이기 전까지 뷰포트 크기가 바뀌어도 다시 맞춘다.
         private bool _alignmentActive;
@@ -672,6 +681,8 @@ namespace CyKim.Scroller
         /// <summary>
         /// 트윈(또는 즉시 이동)을 마무리한다. 상태를 먼저 확정하고 스냅샷한 값으로 알린다.
         /// 이벤트 핸들러가 새 점프를 시작해도 이번 결과(스냅 대상·완료 콜백)는 덮이지 않는다.
+        /// 범위 갱신 콜백 안(즉시 스냅 등)이면 순환 보정과 새 위치의 범위 갱신이 콜백 뒤로 미뤄지므로
+        /// ScrollerSnapped는 범위 갱신이 끝난 뒤 보낸다 (<see cref="RaisePendingSnapEvent"/>). 완료 콜백은 바로 부른다.
         /// </summary>
         private void CompleteTween(Action complete, bool snapped, int snapSlot, bool tweenEnded)
         {
@@ -689,10 +700,36 @@ namespace CyKim.Scroller
             if (snapped)
             {
                 int cellIndex = snapSlot + slotShift;
-                ScrollerSnapped?.Invoke(this, cellIndex, snapDataIndex, GetCellViewAtCellIndex(cellIndex));
+                if (_inRangeUpdate)
+                {
+                    _snapEventPending = true;
+                    _snapEventSlot = cellIndex;
+                    _snapEventDataIndex = snapDataIndex;
+                }
+                else
+                {
+                    ScrollerSnapped?.Invoke(this, cellIndex, snapDataIndex, GetCellViewAtCellIndex(cellIndex));
+                }
             }
 
             complete?.Invoke();
+        }
+
+        /// <summary>
+        /// 범위 갱신 콜백 안에서 끝난 스냅을 알린다. 범위 갱신을 마칠 때(<see cref="RaiseSnapEventAfterRangeUpdate"/>)와
+        /// 배치를 다시 만들기 전(리로드·재배치)에 부른다. 범위 갱신 중에는 부르지 않는다.
+        /// </summary>
+        private void RaisePendingSnapEvent()
+        {
+            if (!_snapEventPending)
+            {
+                return;
+            }
+
+            // 핸들러 안의 이동·리로드가 범위를 다시 갱신해도 같은 알림을 또 보내지 않게 먼저 지운다.
+            _snapEventPending = false;
+            int slot = _snapEventSlot;
+            ScrollerSnapped?.Invoke(this, slot, _snapEventDataIndex, GetCellViewAtCellIndex(slot));
         }
 
         /// <summary>트윈 상태만 지운다 (이벤트 없음).</summary>
@@ -864,8 +901,10 @@ namespace CyKim.Scroller
         /// 루프 모드에서 스크롤 위치가 가운데 세트에서 반 사이클 넘게 벗어나면 사이클 단위로 되돌린다.
         /// 활성 셀은 데이터가 같으므로 다시 바인딩하지 않고 슬롯 번호와 위치만 옮긴다.
         /// 트윈 중에는 하지 않는다 (트윈 목표 사본은 콘텐츠 안에 있으므로 끝난 뒤 보정한다).
+        /// 범위 갱신 콜백 안(즉시 점프 등)에서는 진행 중인 범위 계산이 옛 슬롯 번호를 쓰므로 미루고,
+        /// 범위 갱신이 콜백 뒤 새 위치로 다시 맞추기 직전에 보정한다 (<see cref="ApplyActiveRange"/>).
         /// </summary>
-        /// <returns>슬롯 번호에 더해진 값 (보정하지 않았으면 0).</returns>
+        /// <returns>슬롯 번호에 더해진 값 (보정하지 않았거나 미뤘으면 0).</returns>
         private int RecenterLoopIfNeeded()
         {
             if (!_layout.IsLoop || _tweening || _ignoreLoopJump)
@@ -885,18 +924,30 @@ namespace CyKim.Scroller
                 return 0;
             }
 
+            if (_inRangeUpdate)
+            {
+                _recenterDeferred = true;
+                return 0;
+            }
+
             int slotShift = -cycles * _layout.DataCount;
 
-            // 보던 셀을 cycles 사이클 앞 사본 슬롯으로 옮기는 좌표 이동이다.
-            // 정렬 위치와 드래그 기준점·직전 위치는 ShiftScrollPosition이 같이 옮긴다 (손가락 아래 콘텐츠·관성 속도가 튀지 않게).
-            // 정렬 요청은 슬롯으로 목표를 계산하므로 슬롯을 같은 만큼 옮긴다.
-            ShiftScrollPosition(-cycles * _layout.CycleExtent);
-            ShiftActiveSlots(slotShift);
-
+            // 정렬 요청과 알릴 스냅은 슬롯으로 기억하므로 같은 만큼 옮긴다. 아래 ShiftActiveSlots가 셀을 모두 회수하는 경우
+            // 회수 콜백이 새 이동을 시작할 수 있으므로 그 전에 옮긴다.
             if (_alignmentActive)
             {
                 _align.Slot += slotShift;
             }
+
+            if (_snapEventPending)
+            {
+                _snapEventSlot += slotShift;
+            }
+
+            // 보던 셀을 cycles 사이클 앞 사본 슬롯으로 옮기는 좌표 이동이다.
+            // 정렬 위치와 드래그 기준점·직전 위치는 ShiftScrollPosition이 같이 옮긴다 (손가락 아래 콘텐츠·관성 속도가 튀지 않게).
+            ShiftScrollPosition(-cycles * _layout.CycleExtent);
+            ShiftActiveSlots(slotShift);
 
             return slotShift;
         }

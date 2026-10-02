@@ -35,6 +35,42 @@ namespace CyKim.Scroller
         /// <summary>이 뷰를 만든 스크롤러.</summary>
         public CyScroller Scroller { get; internal set; }
 
+        /// <summary>
+        /// 바인딩 세대. 스크롤러가 이 뷰를 데이터에 바인딩할 때(<see cref="CyScroller.GetCellView"/>가 활성화할 슬롯용으로 내줄 때)와
+        /// 바인딩을 풀 때(풀로 돌려보낼 때, <see cref="CyScroller.ClearActive"/>로 파괴할 때, 활성인 채로 스크롤러와 함께 파괴될 때) 1씩 는다.
+        /// 같은 데이터로 남는 갱신(<see cref="RefreshCellView"/>, 루프 순환 보정)에는 늘지 않는다.
+        /// 스크롤러를 거치지 않고 셀을 직접 파괴하면 늘지 않는다.
+        /// </summary>
+        /// <example>
+        /// 비동기 로드는 시작할 때 값을 기억해 두고, 끝났을 때 값이 다르면(그사이 재활용·재바인딩되거나 스크롤러와 함께 파괴됨) 결과를 버린다.
+        /// <code>
+        /// public void SetData(ItemData item)
+        /// {
+        ///     int version = BindVersion;
+        ///     _icon.sprite = null;
+        ///     IconLoader.Load(item.IconKey, sprite =>
+        ///     {
+        ///         if (version == BindVersion)
+        ///         {
+        ///             _icon.sprite = sprite;   // 아직 같은 바인딩일 때만 그린다
+        ///         }
+        ///     });
+        /// }
+        /// </code>
+        /// </example>
+        public int BindVersion { get; internal set; }
+
+        /// <summary>
+        /// 데이터에 바인딩돼 있는지 (<see cref="DataIndex"/> 0 이상). 풀에 있거나 <see cref="CyScroller.ClearActive"/>·스크롤러 파괴로 바인딩이 풀린 뷰는 false.
+        /// </summary>
+        public bool IsBound => DataIndex >= 0;
+
+        /// <summary>
+        /// 실제 뷰포트(lookAhead 구간 제외)에 걸쳐 있는지. <see cref="OnBecameVisible"/> 직전에 true, <see cref="OnBecameHidden"/> 직전에 false가 된다.
+        /// 스크롤러와 함께 파괴될 때는 표시 끝 없이 마지막 값으로 남는다. 표시 중 시작한 일(노출 타이머 등)은 셀의 OnDestroy에서 이 값을 보고 정리한다.
+        /// </summary>
+        public bool IsDisplayed { get; internal set; }
+
         public RectTransform RectTransform
         {
             get
@@ -55,6 +91,37 @@ namespace CyKim.Scroller
 
         /// <summary>풀로 돌아가기 직전에 호출된다. 이전 데이터 상태를 정리할 때 쓴다.</summary>
         public virtual void OnRecycled()
+        {
+        }
+
+        /// <summary>
+        /// 실제 뷰포트(lookAhead 구간 제외)에 조금이라도 걸치기 시작할 때. <see cref="CyScroller.CellViewWillDisplay"/> 바로 뒤에 불린다.
+        /// 등장 애니메이션·노출 기록처럼 정말 보일 때 할 일에 쓴다. <see cref="OnBecameHidden"/>과 항상 짝을 이룬다
+        /// (스크롤러와 함께 파괴될 때만 예외, <see cref="IsDisplayed"/> 참고).
+        /// </summary>
+        protected internal virtual void OnBecameVisible()
+        {
+        }
+
+        /// <summary>
+        /// 뷰포트에서 완전히 벗어나거나, 보이던 채로 재활용되거나 <see cref="CyScroller.ClearActive"/>로 파괴될 때.
+        /// <see cref="CyScroller.CellViewDidEndDisplay"/> 바로 뒤, 재활용이면 <see cref="OnRecycled"/>보다 먼저 불린다.
+        /// 스크롤러와 함께 파괴될 때는 불리지 않는다.
+        /// </summary>
+        protected internal virtual void OnBecameHidden()
+        {
+        }
+
+        /// <summary>
+        /// <see cref="CyScroller.NotifyCellPositions"/>가 켜져 있을 때 뷰포트 안 위치를 받는다. 위치·활성 범위·레이아웃·뷰포트 크기가 바뀐 프레임에
+        /// 한 번(스크롤러 LateUpdate 끝) 불리고, 새로 활성화된 셀은 활성화 즉시 한 번 더 받는다.
+        /// </summary>
+        /// <param name="normalizedOffset">
+        /// (셀 기준점 − 뷰포트 시작) / 뷰포트 길이. 기준점은 셀 시작 + 셀 크기 × <see cref="CyScroller.CellPositionPivot"/>.
+        /// 0 = 뷰포트 앞(위·왼쪽) 가장자리, 0.5 = 가운데, 1 = 뒤 가장자리. 미리보기 구간 셀은 0 미만·1 초과가 될 수 있다.
+        /// </param>
+        /// <remarks>셀 루트 RectTransform은 스크롤러가 배치하므로 여기서는 자식(스케일·회전·투명도 등)만 바꾼다.</remarks>
+        protected internal virtual void OnViewportPositionChanged(float normalizedOffset)
         {
         }
 

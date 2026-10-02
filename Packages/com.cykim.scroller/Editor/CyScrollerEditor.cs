@@ -37,6 +37,7 @@ namespace CyKim.Scroller.Editor
                 EditorGUILayout.IntField("Loop Sets", layout.SetCount);
                 EditorGUILayout.Vector2IntField("Active Slots", new Vector2Int(scroller.StartCellViewIndex, scroller.EndCellViewIndex));
                 EditorGUILayout.Vector2IntField("Active Data", new Vector2Int(scroller.StartDataIndex, scroller.EndDataIndex));
+                EditorGUILayout.Vector2IntField("Displayed Slots", new Vector2Int(scroller.DisplayedFirstSlot, scroller.DisplayedLastSlot));
                 EditorGUILayout.IntField("Active Views", scroller.ActiveCellViews.Count);
                 EditorGUILayout.IntField("Recycled Views", scroller.GetRecycledCellCount());
                 EditorGUILayout.FloatField("Scroll Position", scroller.ScrollPosition);
