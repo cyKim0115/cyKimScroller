@@ -128,6 +128,23 @@ namespace CyKim.Scroller.Tests
         }
 
         [Test]
+        public void TrailingSlot_PicksSlotEndingAtOrAfterPosition()
+        {
+            // 셀 0: [0,10), 간격 [10,110), 셀 1: [110,120), 간격, 셀 2: [220,230)
+            CyScrollerLayout layout = CreateUniform(3, 10f, 100f);
+
+            Assert.AreEqual(0, layout.GetTrailingSlotAtPosition(5f));
+            Assert.AreEqual(0, layout.GetTrailingSlotAtPosition(10f), "끝이 정확히 맞닿으면 그 셀");
+            Assert.AreEqual(1, layout.GetTrailingSlotAtPosition(50f), "간격 안이면 간격 뒤 셀");
+            Assert.AreEqual(1, layout.GetTrailingSlotAtPosition(120f));
+            Assert.AreEqual(2, layout.GetTrailingSlotAtPosition(121f));
+            Assert.AreEqual(0, layout.GetTrailingSlotAtPosition(-50f), "앞쪽 밖은 첫 슬롯");
+            Assert.AreEqual(2, layout.GetTrailingSlotAtPosition(500f), "뒤쪽 밖은 마지막 슬롯");
+
+            Assert.AreEqual(-1, CreateUniform(0, 10f).GetTrailingSlotAtPosition(0f));
+        }
+
+        [Test]
         public void NearestSlot_PicksCloserEdgeInsideGap()
         {
             CyScrollerLayout layout = CreateUniform(3, 10f, 100f);
@@ -350,13 +367,15 @@ namespace CyKim.Scroller.Tests
                     double position = positions[q];
                     AssertIndex("GetSlotAtPosition", position,
                         reference.GetSlotAtPosition(position), layout.GetSlotAtPosition((float)position), context);
+                    AssertIndex("GetTrailingSlotAtPosition", position,
+                        reference.GetTrailingSlotAtPosition(position), layout.GetTrailingSlotAtPosition((float)position), context);
                     AssertIndex("GetNearestSlot", position,
                         reference.GetNearestSlot(position), layout.GetNearestSlot((float)position), context);
 
                     // 길이 0·음수(빈 구간)도 섞는다.
                     double to = position + random.Next(-8, (int)((viewport + 200f) * 4f) + 1) * 0.25;
                     AssertRange(position, to, reference, layout, context);
-                    checkedQueries += 3;
+                    checkedQueries += 4;
                 }
 
                 // 셀 경계끼리 맞닿은 구간
@@ -496,6 +515,20 @@ namespace CyKim.Scroller.Tests
                 }
 
                 return found;
+            }
+
+            /// <summary>끝 ≥ position인 첫 슬롯. 그런 슬롯이 없으면 마지막 슬롯, 슬롯이 없으면 -1.</summary>
+            public int GetTrailingSlotAtPosition(double position)
+            {
+                for (int slot = 0; slot < SlotCount; slot++)
+                {
+                    if (Ends[slot] >= position)
+                    {
+                        return slot;
+                    }
+                }
+
+                return SlotCount - 1;
             }
 
             /// <summary>

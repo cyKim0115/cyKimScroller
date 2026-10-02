@@ -37,6 +37,28 @@
   즉시 스냅(`ScrollerSnapped`의 셀 번호·셀 뷰, 루프·일반, 같은 콜백에서 위치 유지 리로드를 요청할 때 한 번만 알림),
   멈추지 않고 옮기는 콜백의 다시 맞추기 상한과 같은 프레임 LateUpdate 재시도), 위치 훅(피벗·뷰포트 크기 반영 값, 가로, 활성화 즉시 값,
   꺼짐, 바뀐 것 없는 프레임 무호출, 스크롤러 LateUpdate 뒤 변화의 같은 프레임·다음 프레임 반영), 셀 훅을 켠 스크롤·루프 스윕 GC 0
+- 안정 항목 ID `ICyScrollerItemIdProvider`(선택 구현, `GetItemId(scroller, dataIndex)`): 델리게이트가 함께 구현하면 델리게이트를 다시 받을 때마다 모든 항목의 ID를 받아
+  인덱스별 배열과 ID → 인덱스 사전에 둔다(O(N), 사전은 비운 뒤 다시 써서 용량 유지). 스크롤 중에는 ID를 다시 받지 않고 할당도 없다.
+  `FindDataIndexForItemId(itemId)`로 지금 인덱스를 찾고(없으면 −1), 셀 뷰는 `ItemId`·`HasItemId`로 받는다(바인딩할 때 채우고 바인딩이 풀리면 지움).
+  같은 ID가 여럿이면 ID 조회는 앞 인덱스가 이기고(앵커 복원·정렬 유지는 이전 인덱스 자리에 같은 ID가 남아 있으면 그 자리라서 데이터가 그대로면 제자리),
+  에디터·개발 빌드에서는 다시 받을 때마다 경고를 한 번 남긴다
+- 위치 앵커 `CyScrollerAnchor`(직렬화 가능: `DataIndex`·`ItemId`·`HasItemId`·`Offset`·`Trailing`, `IsValid`)와 `CaptureAnchor(trailing)`·`RestoreAnchor(in anchor)`:
+  뷰포트 앞(또는 뒤) 가장자리에 걸친 항목과 그 가장자리까지 거리로 위치를 적고 되돌린다. 복원은 ID → `DataIndex`(개수를 넘으면 마지막) 순으로 항목을 찾고,
+  빈 앵커는 앞 기준이면 처음·뒤 기준이면 끝, 루프면 가운데 사이클 사본, 결과는 스크롤 범위로 자른다. `ScrollPosition` 대입처럼 트윈·관성·점프 정렬을 멈추고 드래그 기준점을 옮긴다
+- 준비 전 복원 보관: 로드 전·데이터 0개·뷰포트 길이 0일 때 받은 `RestoreAnchor`는 보관했다가 다음 `ReloadData()`(`Delegate` 리로드 포함, 데이터가 있을 때),
+  `ReloadDataKeepingPosition`·축 전환 같은 재배치(그 재배치 안에서 바로), 뷰포트 길이가 생길 때 적용한다. 그 사이 새 위치 요청(새 `RestoreAnchor`, `ReloadData(factor)`·Start·End, 점프·`ScrollIntoView`·`Snap`, `ScrollPosition` 대입)이 오면 갈 셀이 없어도 버린다.
+  드래그·휠은 버리지 않고 그 뒤 자동 스냅은 보관하는 동안 기다리며, 나중에 적용할 때도 `RestoreAnchor`처럼 남은 관성과 스냅 대기를 멈춘다
+- `ReloadData(ReloadAnchor, scrollPositionFactor)`와 `ReloadAnchor`(Factor·Start·End·FirstVisible·LastVisible), `ReloadData(in CyScrollerAnchor)`, 매개변수 없는 `ReloadData()`.
+  FirstVisible·LastVisible은 다시 읽기 전 화면의 앞·뒤 기준 앵커를 다시 읽은 뒤 복원한다. LastVisible은 뷰포트 끝에 걸친 항목의 끝을 같은 자리에 두므로
+  끝에 붙어 있는 채팅에서 마지막 메시지가 커져도 끝에 남고, 뒤에 항목이 붙으면 보던 메시지를 그대로 둔다. 루프의 End는 마지막 항목 끝을 뷰포트 끝에 맞춘다.
+  콜백 안에서 부르면 위치 기준까지 보관했다가 범위 갱신이 끝난 뒤 처리한다
+- 테스트: 앵커 캡처(앞·뒤 기준, 경계, ID 없음·빈 목록), 복원 왕복(세로 패딩·간격 안·스크롤 끝, 가로, 루프 가운데 사본·창 밖 사본), ID를 못 찾을 때 인덱스 대체·지워진 맨 앞 항목,
+  복원의 트윈·관성·정렬 정지와 드래그 기준점, 콜백 안 복원, 준비 전 보관(빈 목록·로드 전·델리게이트 없음·뷰포트 길이 0·같은 프레임 0 왕복)과 버리는 요청 9종(빈 목록 `Snap` 포함),
+  재배치 안 즉시 적용(빈 목록의 위치 유지 리로드·축 전환, 프레임을 넘기지 않고 앵커 자리 셀만 표시), 보관 중 자동 스냅 대기와 적용할 때 관성·스냅 대기 정지,
+  `ReloadAnchor`(Start·End·Factor·루프 End·FirstVisible 삽입·LastVisible 크기 변화·끝에 붙은 채팅·앞뒤 삽입·빈 목록·콜백 안 지연), ID 위치 유지 리로드(앞 삽입·삭제, 루프),
+  ID 정렬 유지(앞 삽입·정렬 항목 삭제), ID 트윈 재매핑(같은 항목 도착·완료 1회), 셀 `ItemId` 바인딩·해제, ID 사전 갱신 시점, 중복 ID 경고 1회,
+  데이터가 그대로일 때 뒤쪽 중복 ID 항목 제자리(복원 왕복·여백 재배치·위치 유지 리로드·FirstVisible·정렬 유지·루프 전환, 자리가 바뀌면 앞 인덱스),
+  ID 제공자 스크롤 스윕·앵커 왕복 GC 0, 레이아웃 뒤 기준 슬롯 조회(EditMode, 기준 모델 대조)
 
 ### Changed
 - 루프 순환 보정은 `ShiftScrollPosition`을, 재배치 뒤 위치 복원(앵커·정렬)·`ScrollPosition` 대입·`ReloadData`·점프·트윈 이동은 같은 내부 이동 루틴을 거친다.
@@ -55,6 +77,10 @@
   0.1.0은 콜백 안에서 바로 보내 새 위치의 셀이 아직 활성화되지 않았으면 셀 뷰가 null이었다. 점프 완료 콜백은 0.1.0처럼 콜백 안에서 바로 부른다
 - 샘플 캐러셀이 스크롤 이벤트에서 카드 크기를 직접 계산하던 방식(`OnScrolled`·`ApplyScale`)을 카드 셀 뷰의 위치 훅으로 바꾸고, 가운데에서 멀수록 투명도도 낮춘다.
   스냅 로그 대신 화면에 가운데 카드를 표시한다
+- `ReloadDataKeepingPosition()`: 델리게이트가 항목 ID를 주면 맨 앞 항목과 진행 중인 트윈 목표·점프 정렬 대상을 ID로 다시 찾는다(앞쪽 삽입·삭제에도 같은 항목, 지워졌으면 같은 인덱스).
+  ID가 있으면 델리게이트를 다시 받아도 점프 정렬을 유지한다(0.1.0은 데이터를 다시 받으면 정렬을 풀었다). ID가 없으면 0.1.0과 같다
+- `ReloadData(float scrollPositionFactor = 0f)`를 `ReloadData()`와 `ReloadData(float)`로 나눴다. 기존 호출은 그대로 컴파일되고(정수 `0`도 비율 오버로드) 동작도 같다.
+  다른 점은 보관한 앵커뿐이다: `ReloadData()`는 적용하고, 비율을 넘기면 버린다
 
 ### Fixed
 - 드래그로 가장자리 너머로 당긴 상태(Elastic)에서 재배치(`ReloadDataKeepingPosition`·`Spacing` 등)가 일어나면 위치가 스크롤 범위로 잘려 콘텐츠가 손가락 아래에서 가장자리로 튀고,

@@ -13,7 +13,7 @@ namespace CyKim.Scroller
     /// <remarks>
     /// <para>드래그·관성·탄성은 표준 ScrollRect가 처리한다. CyScroller는 onValueChanged를 받아 활성 셀 범위를 갱신한다.</para>
     /// <para>콘텐츠에 LayoutGroup을 쓰지 않는다. 셀 RectTransform을 계산된 위치에 직접 배치한다.</para>
-    /// <para>사용 흐름: <see cref="Delegate"/>에 <see cref="ICyScrollerDelegate"/>를 넣고 <see cref="ReloadData"/>를 호출한다.</para>
+    /// <para>사용 흐름: <see cref="Delegate"/>에 <see cref="ICyScrollerDelegate"/>를 넣고 <see cref="ReloadData()"/>를 호출한다.</para>
     /// </remarks>
 #if UNITY_6000_3_OR_NEWER
     [AddComponentMenu("UI (Canvas)/CyKim Scroller")]
@@ -113,8 +113,9 @@ namespace CyKim.Scroller
         // content가 실제로 맞춰져 있는 축. 방향을 바꾼 직후 이전 축으로 위치를 읽는 데 쓴다.
         private bool _appliedVertical = true;
 
-        // 범위 갱신(델리게이트·이벤트 콜백) 안에서 들어온 요청은 끝난 뒤 처리한다.
+        // 범위 갱신(델리게이트·이벤트 콜백) 안에서 들어온 요청은 끝난 뒤 처리한다. 리로드는 다시 읽은 뒤 맞출 위치 기준도 보관한다.
         private bool _reloadPending;
+        private ReloadAnchor _pendingReloadAnchor;
         private float _pendingReloadFactor;
         private bool _relayoutPending;
         private bool _relayoutRequery;
@@ -149,7 +150,7 @@ namespace CyKim.Scroller
         public event CellViewDisplayChangedHandler CellViewWillDisplay;
 
         /// <summary>
-        /// 셀 뷰가 실제 뷰포트에서 완전히 벗어나거나, 보이던 채로 재활용되거나 <see cref="ClearActive"/>로 파괴될 때(<see cref="ReloadData"/>·재배치 등).
+        /// 셀 뷰가 실제 뷰포트에서 완전히 벗어나거나, 보이던 채로 재활용되거나 <see cref="ClearActive"/>로 파괴될 때(<see cref="ReloadData()"/>·재배치 등).
         /// 재활용 이벤트(<see cref="CellViewWillRecycle"/>)보다 먼저 온다.
         /// 스크롤러 자체가 파괴될 때는 사용자 코드를 부르지 않으므로 오지 않는다 (<see cref="CyScrollerCellView.IsDisplayed"/>가 마지막 값으로 남는다).
         /// </summary>
@@ -178,8 +179,9 @@ namespace CyKim.Scroller
         #region Properties
 
         /// <summary>
-        /// 데이터 공급자. 넣으면 다음 LateUpdate(또는 그 전의 첫 범위 갱신)에 처음 위치로 <see cref="ReloadData"/>한다.
-        /// 새 델리게이트가 옛 인덱스로 호출되는 일은 없다.
+        /// 데이터 공급자. 넣으면 다음 LateUpdate(또는 그 전의 첫 범위 갱신)에 <see cref="ReloadData()"/>한다
+        /// (처음 위치로, 그 전에 <see cref="RestoreAnchor"/>로 보관한 앵커가 있으면 그 자리로). 새 델리게이트가 옛 인덱스로 호출되는 일은 없다.
+        /// <see cref="ICyScrollerItemIdProvider"/>도 구현했으면 다시 읽을 때마다 항목 ID를 받는다.
         /// </summary>
         public ICyScrollerDelegate Delegate
         {
@@ -187,7 +189,11 @@ namespace CyKim.Scroller
             set
             {
                 _delegate = value;
+
+                // 선택 구현인 ID 제공자는 넣을 때 한 번만 확인한다. 항목 ID는 다시 읽을 때 받는다.
+                _idProvider = value as ICyScrollerItemIdProvider;
                 _reloadPending = true;
+                _pendingReloadAnchor = ReloadAnchor.Factor;
                 _pendingReloadFactor = 0f;
             }
         }
@@ -420,7 +426,7 @@ namespace CyKim.Scroller
 
         /// <summary>
         /// 콘텐츠 시작(위·왼쪽)에서 뷰포트 시작까지 거리. 대입하면 진행 중인 트윈·관성·점프 정렬을 멈추고 그 위치로 옮긴다.
-        /// 드래그 중이면 손가락 아래 기준점도 새 위치로 옮긴다.
+        /// 드래그 중이면 손가락 아래 기준점도 새 위치로 옮긴다. 적용을 기다리는 앵커(<see cref="RestoreAnchor"/>)는 버린다.
         /// </summary>
         public float ScrollPosition
         {
@@ -435,6 +441,7 @@ namespace CyKim.Scroller
                 CancelTween();
                 _alignmentActive = false;
                 _snapArmed = false;
+                _hasPendingAnchor = false;
                 _scrollRect.StopMovement();
                 MoveContentTo(Mathf.Clamp(value, 0f, ScrollSize));
                 UpdateActiveRange();
@@ -472,19 +479,7 @@ namespace CyKim.Scroller
         public float ScrollSize => Mathf.Max(0f, _layout.ContentExtent - ScrollRectSize);
 
         /// <summary>뷰포트의 스크롤 축 길이.</summary>
-        public float ScrollRectSize
-        {
-            get
-            {
-                if (_viewport == null)
-                {
-                    return 0f;
-                }
-
-                Rect rect = _viewport.rect;
-                return IsVertical ? rect.height : rect.width;
-            }
-        }
+        public float ScrollRectSize => ReadViewportExtent(IsVertical);
 
         /// <summary>콘텐츠 전체 길이 (패딩 포함).</summary>
         public float ContentSize => _layout.ContentExtent;
@@ -622,6 +617,13 @@ namespace CyKim.Scroller
 
             CheckViewportResize();
 
+            if (_hasPendingAnchor && CanApplyPendingAnchor)
+            {
+                // 데이터·뷰포트가 준비되기 전에 받은 앵커. 크기 변화를 놓쳤어도(같은 프레임에 0이 됐다가 돌아옴 등) 준비되면 적용한다.
+                MoveToPendingAnchor();
+                UpdateActiveRange();
+            }
+
             if (_rangeRetryPending)
             {
                 // 범위 갱신 콜백이 매번 콘텐츠를 옮겨 다시 맞추기를 멈췄다. 이번 프레임 위치로 다시 맞춘다
@@ -651,60 +653,76 @@ namespace CyKim.Scroller
         #region Public API
 
         /// <summary>
-        /// 델리게이트에서 개수·크기를 다시 받아 처음부터 배치한다. 진행 중인 관성·트윈은 멈춘다.
+        /// 델리게이트에서 개수·크기(와 항목 ID)를 다시 받아 처음부터 배치한다. 진행 중인 관성·트윈·점프 정렬은 멈춘다.
+        /// 데이터·뷰포트가 준비되기 전에 <see cref="RestoreAnchor"/>로 보관한 앵커가 있으면 처음 대신 그 자리로 간다.
+        /// 델리게이트·셀 이벤트 콜백 안에서 불러도 된다 (범위 갱신이 끝난 뒤 처리).
+        /// </summary>
+        /// <remarks>데이터가 바뀌어도 보던 항목을 유지하려면 <see cref="ReloadDataKeepingPosition"/>이나 <see cref="ReloadData(ReloadAnchor, float)"/>를 쓴다.</remarks>
+        public void ReloadData()
+        {
+            RequestReload(ReloadAnchor.Factor, 0f);
+        }
+
+        /// <summary>
+        /// 델리게이트에서 개수·크기(와 항목 ID)를 다시 받아 처음부터 배치하고 비율 위치로 간다. 진행 중인 관성·트윈·점프 정렬은 멈춘다.
+        /// 위치를 정해 부르므로 보관한 앵커(<see cref="RestoreAnchor"/>)는 버린다.
         /// </summary>
         /// <param name="scrollPositionFactor">
         /// 로드 후 위치. 0 = 처음, 1 = 끝. 루프 모드에서는 한 사이클 안의 비율이다.
         /// 데이터가 바뀌어도 보던 셀을 유지하려면 <see cref="ReloadDataKeepingPosition"/>을 쓴다.
         /// </param>
-        public void ReloadData(float scrollPositionFactor = 0f)
+        public void ReloadData(float scrollPositionFactor)
         {
-            if (!EnsureInitialized())
-            {
-                return;
-            }
-
-            if (_inRangeUpdate)
-            {
-                // 델리게이트 콜백 안에서 호출되면 범위 갱신이 끝난 뒤 처리한다.
-                _reloadPending = true;
-                _pendingReloadFactor = scrollPositionFactor;
-                return;
-            }
-
-            // 범위 갱신 콜백 안에서 끝난 스냅이 아직 알려지지 않았으면 배치를 다시 만들기 전에 알린다.
-            RaisePendingSnapEvent();
-
-            _reloadPending = false;
-            _relayoutPending = false;
-            _relayoutRequery = false;
-            _relayoutReconfigure = false;
-            ApplyPendingClears();
-
-            CancelTween();
-            _snapArmed = false;
-            _alignmentActive = false;
-            _scrollRect.StopMovement();
-
-            RecycleAllActive();
-            RebuildLayout(true);
-            _hasLoaded = true;
-
-            MoveContentTo(GetPositionForFactor(scrollPositionFactor));
-            _lastViewportExtent = ScrollRectSize;
-            UpdateActiveRange();
-            ApplyScrollbarVisibility();
+            _hasPendingAnchor = false;
+            RequestReload(ReloadAnchor.Factor, scrollPositionFactor);
         }
 
         /// <summary>
-        /// 개수·크기를 다시 받되, 뷰포트 맨 앞에 걸친 데이터 인덱스와 그 셀 안의 오프셋을 유지한다.
-        /// 셀 크기가 바뀌었거나 뒤쪽에 항목이 추가됐을 때 쓴다. 델리게이트 콜백 안에서 불러도 된다 (끝난 뒤 처리).
+        /// 델리게이트에서 다시 읽고 anchor가 정한 위치로 간다. 진행 중인 관성·트윈·점프 정렬은 멈춘다.
+        /// 델리게이트·셀 이벤트 콜백 안에서 부르면 위치 기준까지 보관했다가 범위 갱신이 끝난 뒤 처리한다.
         /// </summary>
+        /// <param name="anchor">
+        /// Factor·Start·End는 위치를 정하므로 보관한 앵커(<see cref="RestoreAnchor"/>)를 버린다.
+        /// FirstVisible·LastVisible은 다시 읽기 직전에 <see cref="CaptureAnchor"/>(false·true)로 적은 앵커를 다시 읽은 뒤 복원한다
+        /// (보관한 앵커가 있으면 그쪽이 가려던 자리이므로 그 앵커를 복원한다). 드래그 중 가장자리 너머로 당기고 있었으면 그 거리는 남긴다.
+        /// </param>
+        /// <param name="scrollPositionFactor">Factor일 때 위치 (0 = 처음, 1 = 끝). 다른 값에서는 쓰지 않는다.</param>
+        public void ReloadData(ReloadAnchor anchor, float scrollPositionFactor = 0f)
+        {
+            if (anchor != ReloadAnchor.FirstVisible && anchor != ReloadAnchor.LastVisible)
+            {
+                _hasPendingAnchor = false;
+            }
+
+            RequestReload(anchor, scrollPositionFactor);
+        }
+
+        /// <summary>
+        /// 델리게이트에서 다시 읽은 뒤 anchor를 복원한다 (<see cref="RestoreAnchor"/>와 같은 규칙: 항목 ID가 있으면 ID로 찾고, 스크롤 범위 안으로 자른다).
+        /// 다시 읽은 데이터가 0개이거나 뷰포트 길이가 0이면 앵커를 보관했다가 준비되면 적용한다.
+        /// </summary>
+        public void ReloadData(in CyScrollerAnchor anchor)
+        {
+            _pendingAnchor = anchor;
+            _hasPendingAnchor = true;
+            RequestReload(ReloadAnchor.Factor, 0f);
+        }
+
+        /// <summary>
+        /// 개수·크기를 다시 받되, 뷰포트 맨 앞에 걸친 항목과 그 셀 안의 오프셋을 유지한다. 델리게이트 콜백 안에서 불러도 된다 (끝난 뒤 처리).
+        /// </summary>
+        /// <remarks>
+        /// <para>델리게이트가 <see cref="ICyScrollerItemIdProvider"/>를 구현하면 인덱스 대신 ID로 같은 항목을 찾는다. 앞쪽에 항목이 삽입·삭제돼도 같은 항목이 맨 위에 남는다
+        /// (그 항목이 지워졌으면 같은 인덱스). ID가 없으면 같은 데이터 인덱스를 유지하므로 셀 크기가 바뀌었거나 뒤쪽에 항목이 추가됐을 때 쓴다.</para>
+        /// <para><see cref="ReloadData(ReloadAnchor, float)"/>와 달리 셀만 다시 배치하는 재배치라 진행 중인 트윈은 같은 항목(개수가 줄었으면 잘린 인덱스)을 향해 이어 가고,
+        /// 점프·스냅 정렬은 ID가 있으면 같은 항목에 맞춘 채 유지한다 (ID가 없으면 정렬을 풀고 맨 앞 셀 기준으로 둔다).</para>
+        /// </remarks>
         public void ReloadDataKeepingPosition()
         {
             if (!_hasLoaded || _reloadPending)
             {
-                ReloadData(_reloadPending ? _pendingReloadFactor : 0f);
+                // 아직 로드 전이거나 델리게이트가 바뀌었으면 위치 유지보다 새 데이터 로드가 먼저다.
+                RequestReload(_reloadPending ? _pendingReloadAnchor : ReloadAnchor.Factor, _reloadPending ? _pendingReloadFactor : 0f);
                 return;
             }
 
@@ -817,7 +835,7 @@ namespace CyKim.Scroller
         public int GetDataIndexForCellViewIndex(int cellIndex) => _layout.SlotToDataIndex(cellIndex);
 
         /// <summary>
-        /// 활성 셀을 파괴한다. 셀 프리팹을 바꾼 뒤 <see cref="ReloadData"/>와 함께 쓴다.
+        /// 활성 셀을 파괴한다. 셀 프리팹을 바꾼 뒤 <see cref="ReloadData()"/>와 함께 쓴다.
         /// 보이던 셀은 파괴 전에 <see cref="CellViewDidEndDisplay"/>를 받는다. 파괴할 셀은 바인딩을 푼다(<see cref="CyScrollerCellView.IsBound"/> false).
         /// 델리게이트·이벤트 콜백 안에서 부르면 범위 갱신이 끝난 뒤 처리한다.
         /// </summary>
@@ -1027,7 +1045,7 @@ namespace CyKim.Scroller
 
             if (_reloadPending)
             {
-                ReloadData(_pendingReloadFactor);
+                ReloadNow(_pendingReloadAnchor, _pendingReloadFactor);
                 return _hasLoaded;
             }
 
@@ -1062,6 +1080,85 @@ namespace CyKim.Scroller
 
         #endregion
 
+        #region Reload
+
+        /// <summary>
+        /// 리로드 요청 공통 경로. 범위 갱신(델리게이트·이벤트 콜백) 안이면 위치 기준까지 보관했다가 끝난 뒤 처리한다.
+        /// 보관한 앵커를 버릴지는 호출자가 정한다 (위치를 정한 요청만 버린다).
+        /// </summary>
+        private void RequestReload(ReloadAnchor anchor, float factor)
+        {
+            if (!EnsureInitialized())
+            {
+                return;
+            }
+
+            if (_inRangeUpdate)
+            {
+                _reloadPending = true;
+                _pendingReloadAnchor = anchor;
+                _pendingReloadFactor = factor;
+                return;
+            }
+
+            ReloadNow(anchor, factor);
+        }
+
+        /// <summary>
+        /// 리로드 본체. 다시 읽은 뒤 위치는 보관한 앵커(적용할 수 있으면) → FirstVisible·LastVisible이면 다시 읽기 전 화면의 앵커 →
+        /// End면 끝 → 나머지는 비율(Start는 0) 순으로 정한다.
+        /// </summary>
+        private void ReloadNow(ReloadAnchor anchor, float factor)
+        {
+            // 범위 갱신 콜백 안에서 끝난 스냅이 아직 알려지지 않았으면 배치를 다시 만들기 전에 알린다.
+            RaisePendingSnapEvent();
+
+            _reloadPending = false;
+            _relayoutPending = false;
+            _relayoutRequery = false;
+            _relayoutReconfigure = false;
+            ApplyPendingClears();
+
+            CancelTween();
+            _snapArmed = false;
+            _alignmentActive = false;
+            _scrollRect.StopMovement();
+
+            RecycleAllActive();
+
+            // 회수 콜백이 위치를 바꿨어도 바뀐 화면을 기준으로 삼도록 셀부터 회수한 뒤 읽는다.
+            // 보관한 앵커가 있으면 그쪽이 가려던 자리이므로 지금 화면 대신 그 앵커를 쓴다.
+            bool keepVisible = !_hasPendingAnchor && (anchor == ReloadAnchor.FirstVisible || anchor == ReloadAnchor.LastVisible);
+            float overscroll = 0f;
+            CyScrollerAnchor visible = keepVisible ? CaptureLayoutAnchor(anchor == ReloadAnchor.LastVisible, out overscroll) : default;
+
+            RebuildLayout(true);
+            _hasLoaded = true;
+            _lastViewportExtent = ScrollRectSize;
+
+            if (_hasPendingAnchor && CanApplyPendingAnchor)
+            {
+                MoveToPendingAnchor();
+            }
+            else if (keepVisible)
+            {
+                RestoreAnchorPosition(in visible, overscroll);
+            }
+            else if (anchor == ReloadAnchor.End)
+            {
+                MoveContentTo(Mathf.Clamp(GetEndPosition(), 0f, ScrollSize));
+            }
+            else
+            {
+                MoveContentTo(GetPositionForFactor(anchor == ReloadAnchor.Start ? 0f : factor));
+            }
+
+            UpdateActiveRange();
+            ApplyScrollbarVisibility();
+        }
+
+        #endregion
+
         #region Layout
 
         private void RebuildLayout(bool requeryDelegate)
@@ -1083,6 +1180,8 @@ namespace CyKim.Scroller
                 {
                     _layout.SetSize(i, _delegate.GetCellViewSize(this, i));
                 }
+
+                RebuildItemIds(count);
             }
 
             GetMainAxisPadding(out float paddingBefore, out float paddingAfter);
@@ -1140,7 +1239,7 @@ namespace CyKim.Scroller
             if (_reloadPending)
             {
                 // 델리게이트가 바뀌었으면 위치 유지보다 새 데이터 로드가 먼저다.
-                ReloadData(_pendingReloadFactor);
+                ReloadNow(_pendingReloadAnchor, _pendingReloadFactor);
                 return;
             }
 
@@ -1156,6 +1255,7 @@ namespace CyKim.Scroller
         /// <remarks>
         /// 진행 중인 트윈(점프·스냅·ScrollIntoView)은 끊지 않는다. 화면은 맨 앞 셀 기준으로 그대로 두고, 같은 데이터(개수가 줄었으면 잘린 인덱스)를
         /// 향해 남은 시간 동안 계속 간다. 목표는 새 배치에서 다시 계산하고, 트윈 시작점은 다음 프레임에 화면이 튀지 않게 다시 잡는다(<see cref="RebaseTween"/>).
+        /// 항목 ID가 있으면 맨 앞 셀과 트윈 목표·정렬 대상을 ID로 다시 찾으므로 앞쪽에 항목이 삽입·삭제돼도 같은 항목을 지킨다.
         /// </remarks>
         private void ApplyRelayout(bool requeryDelegate, bool reconfigure)
         {
@@ -1166,12 +1266,15 @@ namespace CyKim.Scroller
             RecycleAllActive();
 
             // 트윈이 아닌 정렬 유지는 데이터를 다시 받지 않을 때만 지킨다 (다시 받으면 같은 인덱스가 다른 항목일 수 있다).
+            // 항목 ID가 있으면 다시 받아도 ID로 같은 항목을 찾을 수 있으므로 지킨다.
             bool tweening = _tweening;
-            bool keepAlignment = _alignmentActive && (tweening || !requeryDelegate);
-            int alignDataIndex = keepAlignment ? _layout.SlotToDataIndex(_align.Slot) : -1;
+            int alignDataIndex = _alignmentActive ? _layout.SlotToDataIndex(_align.Slot) : -1;
+            bool alignById = requeryDelegate && _hasItemIds && alignDataIndex >= 0;
+            long alignItemId = alignById ? _itemIds[alignDataIndex] : 0L;
+            bool keepAlignment = _alignmentActive && (tweening || !requeryDelegate || alignById);
 
             float previousPosition = ReadPosition(_appliedVertical);
-            CaptureAnchor(out int anchorDataIndex, out float anchorOffset, out float anchorOverscroll);
+            CyScrollerAnchor anchor = CaptureLayoutAnchor(false, out float anchorOverscroll);
 
             // 루프 트윈이 맨 앞 셀보다 몇 사이클 앞뒤 사본으로 가던 중인지. 새 배치에서도 같은 방향 사본으로 가게 한다.
             int alignSetOffset = 0;
@@ -1188,12 +1291,27 @@ namespace CyKim.Scroller
 
             RebuildLayout(requeryDelegate);
 
+            if (alignById)
+            {
+                // 같은 자리에 같은 항목이 남아 있으면 그 자리 (같은 ID가 여럿이어도 데이터가 그대로면 정렬 대상이 옮겨 가지 않는다).
+                int found = ResolveItemIdIndex(alignItemId, alignDataIndex);
+                if (found >= 0)
+                {
+                    alignDataIndex = found;
+                }
+                else if (!tweening)
+                {
+                    // 정렬하던 항목이 지워졌다. 정렬을 풀고 맨 앞 셀 기준으로 둔다 (트윈은 잘린 인덱스로 계속 간다).
+                    keepAlignment = false;
+                }
+            }
+
             // 모든 경로가 MoveContentTo로 옮긴다 (드래그 중이면 기준점·직전 위치까지 맞춤).
             bool tweenEmptied = false;
             Action emptiedComplete = null;
             if (tweening)
             {
-                int anchorSlot = RestoreAnchor(anchorDataIndex, anchorOffset, anchorOverscroll);
+                int anchorSlot = RestoreAnchorPosition(in anchor, anchorOverscroll);
                 if (_layout.DataCount > 0)
                 {
                     _align.Slot = RemapAlignSlot(alignDataIndex, anchorSlot, alignSetOffset);
@@ -1216,7 +1334,15 @@ namespace CyKim.Scroller
             else
             {
                 _alignmentActive = false;
-                RestoreAnchor(anchorDataIndex, anchorOffset, anchorOverscroll);
+                if (_hasPendingAnchor && CanApplyPendingAnchor)
+                {
+                    // 데이터·뷰포트가 준비되기 전에 받은 앵커가 이 재배치로 적용할 수 있게 됐다 (데이터가 생김, 축이 바뀌어 뷰포트 길이가 생김 등).
+                    MoveToPendingAnchor();
+                }
+                else
+                {
+                    RestoreAnchorPosition(in anchor, anchorOverscroll);
+                }
             }
 
             _lastViewportExtent = ScrollRectSize;
@@ -1257,10 +1383,15 @@ namespace CyKim.Scroller
                 return;
             }
 
+            // 뷰포트 길이가 0이라 보관해 둔 앵커가 있으면 이제 적용한다 (보관 중에는 트윈·정렬이 없다).
             // 점프·스냅으로 맞춘 상태면 새 뷰포트 크기로 정렬을 다시 계산한다 (예: 첫 프레임 Canvas 크기 확정, 화면 회전).
             // 트윈 중이면 목표는 매 프레임 다시 계산하므로, 다음 프레임에 화면이 튀지 않게 시작점만 다시 잡는다.
             // 정렬이 없으면 콘텐츠 시작 기준 위치를 그대로 둔다.
-            if (_tweening)
+            if (_hasPendingAnchor && CanApplyPendingAnchor)
+            {
+                MoveToPendingAnchor();
+            }
+            else if (_tweening)
             {
                 RebaseTween(0f);
             }
@@ -1764,6 +1895,7 @@ namespace CyKim.Scroller
             cell.DataIndex = dataIndex;
             cell.CellIndex = slot;
             cell.Active = true;
+            AssignItemId(cell, dataIndex);
 
             Transform cellTransform = cell.transform;
             if (cellTransform.parent != _content)
@@ -1936,6 +2068,8 @@ namespace CyKim.Scroller
             cell.Active = false;
             cell.DataIndex = -1;
             cell.CellIndex = -1;
+            cell.ItemId = 0L;
+            cell.HasItemId = false;
             cell.BindVersion++;
         }
 
@@ -1977,6 +2111,7 @@ namespace CyKim.Scroller
             cell.Scroller = this;
             cell.DataIndex = _pendingDataIndex;
             cell.CellIndex = _pendingCellIndex;
+            AssignItemId(cell, _pendingDataIndex);
 
             if (_pendingDataIndex >= 0)
             {

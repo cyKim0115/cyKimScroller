@@ -245,6 +245,36 @@ namespace CyKim.Scroller
         }
 
         /// <summary>
+        /// end ≥ position 인 첫 슬롯 (<see cref="GetSlotAtPosition"/>을 뒤쪽 기준으로 뒤집은 짝). position이 셀 사이 간격 안이면 간격 뒤 슬롯이다.
+        /// 범위 밖이면 0 또는 마지막 슬롯으로 잘린다. 슬롯이 없으면 -1.
+        /// </summary>
+        public int GetTrailingSlotAtPosition(float position)
+        {
+            int count = SlotCount;
+            if (count == 0)
+            {
+                return -1;
+            }
+
+            int lo = 0;
+            int hi = count;
+            while (lo < hi)
+            {
+                int mid = (lo + hi) >> 1;
+                if (GetSlotEnd(mid) >= position)
+                {
+                    hi = mid;
+                }
+                else
+                {
+                    lo = mid + 1;
+                }
+            }
+
+            return Mathf.Min(lo, count - 1);
+        }
+
+        /// <summary>
         /// position에 가장 가까운 슬롯. 간격(gap) 안이면 앞뒤 셀 중 가장자리가 더 가까운 쪽을 고른다.
         /// </summary>
         public int GetNearestSlot(float position)

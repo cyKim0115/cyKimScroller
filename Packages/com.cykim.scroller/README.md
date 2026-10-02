@@ -10,6 +10,7 @@ uGUI `ScrollRect` 위에서 동작하는 가상화 스크롤러. 보이는 구�
 - 무한 루프 (짧은 목록도 뷰포트를 채우도록 세트 수 자동 결정, 재바인딩 없는 순환 보정, 드래그 중 기준점 재설정)
 - 스냅 (드래그·휠 후, 누르고 있는 동안은 대기), 속도 상한, 스크롤바 표시 모드
 - 셀 훅: 실제 뷰포트 기준 표시 이벤트(lookAhead 구간 제외, 스크롤러 자체가 파괴될 때 말고는 항상 짝), 늦은 비동기 결과를 버리는 `BindVersion`, 캐러셀·휠 피커 연출용 뷰포트 위치 훅
+- 안정 항목 ID와 위치 앵커: 앞쪽에 항목이 삽입·삭제돼도 보던 항목을 지키는 리로드, 아래쪽 기준(채팅) 리로드, 항목 기준 위치 저장·복원(데이터·뷰포트가 준비되기 전 요청은 보관)
 - 스크롤 핫패스 GC 할당 0 (PlayMode 테스트로 검증, 셀 훅을 켠 상태 포함)
 
 Unity 6000.0 이상, uGUI 2.0 이상 (6000.6.0f1 / uGUI 2.6.0에서 검증).
@@ -66,6 +67,7 @@ public class InventoryList : MonoBehaviour, ICyScrollerDelegate
 ```
 
 데이터가 바뀌면 `ReloadData()` (처음으로) 또는 `ReloadDataKeepingPosition()` (맨 앞 셀 유지)을 호출한다.
+앞쪽에 항목이 삽입·삭제돼도 같은 항목을 지키려면 델리게이트에 `ICyScrollerItemIdProvider`도 구현한다 (아래 [항목 ID와 위치 앵커](#항목-id와-위치-앵커)).
 크기는 그대로이고 보이는 셀 내용만 바뀌었으면 `RefreshActiveCellViews()`가 가장 싸다.
 단 이 메서드는 활성 셀마다 `RefreshCellView()`를 부르기만 하므로, 셀 뷰가 이를 재정의해 자기 데이터로 다시 그려야 한다.
 
@@ -86,7 +88,8 @@ public class ItemCellView : CyScrollerCellView
 
 | 분류 | 멤버 |
 |---|---|
-| 데이터 | `Delegate`, `ReloadData(factor)`, `ReloadDataKeepingPosition()`, `RefreshActiveCellViews()`, `GetCellView(prefab)` |
+| 데이터 | `Delegate`, `ReloadData()`, `ReloadData(factor)`, `ReloadData(ReloadAnchor, factor)`, `ReloadData(in CyScrollerAnchor)`, `ReloadDataKeepingPosition()`, `RefreshActiveCellViews()`, `GetCellView(prefab)` |
+| 항목 ID·앵커 | `ICyScrollerItemIdProvider.GetItemId`, `FindDataIndexForItemId(itemId)`, `CaptureAnchor(trailing)`, `RestoreAnchor(in anchor)`, `CyScrollerAnchor`, `ReloadAnchor`(Factor·Start·End·FirstVisible·LastVisible) |
 | 이동 | `JumpToDataIndex(dataIndex, scrollerOffset, cellOffset, useSpacing, tweenType, tweenTime, onComplete, loopJumpDirection)`, `ScrollIntoView(dataIndex, align, margin, tweenType, tweenTime, onComplete, loopJumpDirection)`, `Snap()`, `InterruptTween()`, `GetJumpTargetPosition(...)` |
 | 위치 | `ScrollPosition`, `NormalizedScrollPosition`, `ScrollSize`, `ScrollRectSize`, `ContentSize`, `Velocity`, `LinearVelocity` |
 | 범위 | `NumberOfCells`, `NumberOfCellSlots`, `StartDataIndex`/`EndDataIndex`, `StartCellViewIndex`/`EndCellViewIndex`, `ActiveCellViews`, `GetCellViewAtDataIndex`, `GetCellViewAtCellIndex`, `IsDataIndexFullyVisible(dataIndex, margin)` |
@@ -95,7 +98,7 @@ public class ItemCellView : CyScrollerCellView
 | 정리 | `ClearActive()`, `ClearRecycled()`, `ClearAll()`, `GetRecycledCellCount()` |
 | 이벤트 | `CellViewVisibilityChanged`, `CellViewWillDisplay`, `CellViewDidEndDisplay`, `CellViewPositionChanged`, `CellViewInstantiated`, `CellViewReused`, `CellViewWillRecycle`, `ScrollerScrolled`, `ScrollerSnapped`, `ScrollerScrollingChanged`, `ScrollerTweeningChanged` |
 | 위치 훅 | `NotifyCellPositions`, `CellPositionPivot` |
-| 셀 뷰 | `DataIndex`, `CellIndex`, `Active`, `IsBound`, `IsDisplayed`, `BindVersion`, `RefreshCellView()`, `OnRecycled()`, `OnBecameVisible()`, `OnBecameHidden()`, `OnViewportPositionChanged(normalizedOffset)` |
+| 셀 뷰 | `DataIndex`, `CellIndex`, `ItemId`, `HasItemId`, `Active`, `IsBound`, `IsDisplayed`, `BindVersion`, `RefreshCellView()`, `OnRecycled()`, `OnBecameVisible()`, `OnBecameHidden()`, `OnViewportPositionChanged(normalizedOffset)` |
 
 `scrollerOffset` / `cellOffset`은 0 = 앞(위·왼쪽), 0.5 = 가운데, 1 = 뒤. 가운데 정렬은 `JumpToDataIndex(i, 0.5f, 0.5f)`.
 
@@ -128,6 +131,49 @@ public class CardCellView : CyScrollerCellView
 
 비동기 로드(아이콘·썸네일)는 바인딩할 때 `BindVersion`을 기억해 두고, 끝났을 때 값이 다르면(그사이 재활용·재바인딩되거나 스크롤러와 함께 파괴됨) 결과를 버린다.
 
+### 항목 ID와 위치 앵커
+
+델리게이트가 `ICyScrollerItemIdProvider`도 구현하면 스크롤러는 다시 읽을 때마다 항목 ID를 받아 두고, 위치를 지킬 때 인덱스 대신 ID로 같은 항목을 찾는다.
+ID는 데이터가 바뀌어도 같은 항목이면 같은 값이어야 한다 (서버 ID·DB 키 등. 데이터 인덱스를 그대로 쓰면 의미가 없다).
+
+```csharp
+public class ChatList : MonoBehaviour, ICyScrollerDelegate, ICyScrollerItemIdProvider
+{
+    [SerializeField] private CyScroller _scroller;
+    private readonly List<Message> _messages = new List<Message>();
+
+    public long GetItemId(CyScroller scroller, int dataIndex) => _messages[dataIndex].Id;
+    // GetNumberOfCells · GetCellViewSize · GetCellView는 위 예와 같다
+
+    private void OnOlderMessagesLoaded(List<Message> older)
+    {
+        _messages.InsertRange(0, older);
+        _scroller.ReloadDataKeepingPosition();   // 보던 메시지가 같은 자리에 남는다
+    }
+
+    private void OnMessageReceived(Message message)
+    {
+        bool atEnd = _scroller.ScrollPosition >= _scroller.ScrollSize - 1f;
+        _messages.Add(message);
+
+        // 끝에 있었으면 새 메시지를 따라가고, 아니면 보던 아래쪽 메시지를 같은 자리에 둔다.
+        _scroller.ReloadData(atEnd ? ReloadAnchor.End : ReloadAnchor.LastVisible);
+    }
+}
+```
+
+화면을 닫았다 다시 열 때는 앵커를 저장해 두고 복원한다. 데이터가 아직 없거나 뷰포트 크기가 정해지기 전이면 보관했다가 준비되면 적용한다.
+
+```csharp
+CyScrollerAnchor saved = _scroller.CaptureAnchor();   // [Serializable] 구조체
+
+// 다시 열 때 (Delegate를 넣기 전이든 뒤든)
+_scroller.RestoreAnchor(saved);
+```
+
+`CaptureAnchor()`는 뷰포트 맨 앞에 걸친 항목과 셀 시작 → 뷰포트 시작 거리를, `CaptureAnchor(true)`는 뷰포트 맨 뒤에 걸친 항목과 뷰포트 끝 → 셀 끝 거리를 적는다.
+`ReloadDataKeepingPosition()`은 셀만 다시 배치하므로 진행 중인 트윈·점프 정렬을 이어 가고, `ReloadData(ReloadAnchor.FirstVisible)`·`LastVisible`은 전체 리로드(트윈·정렬 정지)에 앵커 복원을 더한 것이다.
+
 ## 동작 규칙
 
 - **content를 스크롤러가 소유한다.** 앵커·피벗·크기를 실행 시 다시 설정하고, content의 `LayoutGroup`·`ContentSizeFitter`는 끈다.
@@ -152,14 +198,30 @@ public class CardCellView : CyScrollerCellView
   루프에서는 어느 사본이든 완전히 보이면 보이는 것으로 본다.
   Nearest로 이미 보이는 셀이나 더 움직일 수 없는 셀(뷰포트보다 큰 셀이 이미 시작에 맞춰져 있을 때 등)을 요청하면 움직이지 않고 바로 완료 콜백을 부른다.
   이때 진행 중인 트윈은 그 자리에서 멈추고(새 요청이 대신하므로 이전 완료 콜백은 없음), 드래그·관성은 그대로 둔다. Start·Center·End는 점프처럼 항상 정렬을 맞춘다.
-- 스크롤러가 코드로 콘텐츠를 옮기는 경로(루프 순환 보정, `ReloadDataKeepingPosition`·`Spacing` 등 재배치 뒤 위치 유지, `ScrollPosition` 대입)는 하나의 이동 루틴을 거친다.
+- 스크롤러가 코드로 콘텐츠를 옮기는 경로(루프 순환 보정, `ReloadDataKeepingPosition`·`Spacing` 등 재배치 뒤 위치 유지, `ScrollPosition` 대입, `RestoreAnchor`)는 하나의 이동 루틴을 거친다.
   드래그 중이면 손가락 아래 기준점과 ScrollRect의 직전 위치를 같이 옮기므로, 드래그 도중 재배치·순환 보정이 일어나도 콘텐츠가 손가락에서 떨어지지 않고 놓을 때 관성 속도도 튀지 않는다.
   가장자리 너머로 당기는 중(Elastic)에도 같다. 다만 가장자리를 당기던 거리보다 더 넘기지는 않으며, 이어지는 드래그의 고무줄 저항도 끊기지 않는다.
   드래그 중이 아니면 재배치 뒤 위치는 스크롤 범위 안으로 맞춘다.
-- 델리게이트·셀 이벤트 콜백 안에서 `ReloadData`·`ReloadDataKeepingPosition`·`Clear*`를 불러도 된다. 범위 갱신이 끝난 뒤 처리한다.
-  즉시 점프·`ScrollPosition` 대입은 바로 옮기고, 범위는 옛 위치 기준 작업을 멈춘 뒤 새 위치로 다시 맞춘다 (아래 셀 훅 동작).
+- 델리게이트·셀 이벤트 콜백 안에서 `ReloadData`(`ReloadAnchor` 포함)·`ReloadDataKeepingPosition`·`Clear*`를 불러도 된다. 범위 갱신이 끝난 뒤 처리한다.
+  즉시 점프·`ScrollPosition` 대입·`RestoreAnchor`는 바로 옮기고, 범위는 옛 위치 기준 작업을 멈춘 뒤 새 위치로 다시 맞춘다 (아래 셀 훅 동작).
+- 항목 ID(`ICyScrollerItemIdProvider`)는 `ReloadData`·`ReloadDataKeepingPosition`·`Delegate` 리로드처럼 델리게이트를 다시 받을 때만 항목마다 한 번씩 받는다(O(N)).
+  스크롤 중에는 받지 않고 할당도 없다. 같은 ID가 여럿이면 ID로 찾을 때(`FindDataIndexForItemId`) 앞 인덱스가 이기고, 에디터·개발 빌드에서는 다시 받을 때마다 경고를 한 번 남긴다.
+  위치를 지킬 때(앵커 복원·정렬 유지)는 이전 인덱스 자리에 같은 ID가 남아 있으면 그 자리를 쓰므로, 데이터가 그대로면 뒤쪽 중복 항목을 보고 있어도 제자리다.
+  데이터를 바꾼 뒤 다시 읽기 전에는 `FindDataIndexForItemId`·셀 `ItemId`가 이전 데이터 기준이다.
+- `ReloadDataKeepingPosition()`은 ID가 있으면 맨 앞 항목과 트윈 목표·점프 정렬 대상을 ID로 다시 찾는다 (지워졌으면 같은 인덱스, 정렬하던 항목이 지워지면 정렬을 푼다).
+  ID가 없으면 데이터 인덱스를 지키고, 델리게이트를 다시 받으면 점프 정렬을 푼다 (같은 인덱스가 다른 항목일 수 있으므로).
+- 앵커 복원(`RestoreAnchor`·`ReloadData(in anchor)`·FirstVisible·LastVisible)은 ID → `DataIndex`(개수를 넘으면 마지막) 순으로 항목을 찾는다
+  (ID는 `DataIndex` 자리의 항목이 같은 ID면 그 자리, 아니면 `FindDataIndexForItemId`). 빈 앵커(빈 목록에서 캡처)는 앞 기준이면 처음, 뒤 기준이면 끝이다.
+  결과는 스크롤 범위로 자르고, 루프면 가운데 사이클 사본에 맞춘다. `RestoreAnchor`는 `ScrollPosition` 대입처럼 트윈·관성·점프 정렬을 멈추고, 드래그 중이면 손가락 아래 기준점만 옮긴다.
+- 로드 전·데이터 0개·뷰포트 길이 0일 때 받은 `RestoreAnchor`는 보관했다가 다음 `ReloadData()`(`Delegate` 리로드·`ReloadDataKeepingPosition` 포함, 데이터가 있을 때)나 뷰포트 길이가 생길 때 적용한다.
+  그 사이 위치를 정하는 요청(새 `RestoreAnchor`, `ReloadData(factor)`·Start·End, 점프·`ScrollIntoView`·`Snap`, `ScrollPosition` 대입)이 오면 갈 셀이 없어도 버리고,
+  FirstVisible·LastVisible 리로드는 보관한 앵커를 쓴다. 드래그·휠은 버리지 않고, 그 뒤 자동 스냅은 보관하는 동안 기다린다.
+  보관한 앵커를 나중에 적용할 때도 `RestoreAnchor`처럼 남은 관성과 스냅 대기를 멈춘다(빈 목록을 튕긴 관성이 복원한 자리를 옮기지 않게).
+  그래서 `ReloadData()`는 보관한 앵커를 적용하고 `ReloadData(0f)`는 버린다. 보관하는 동안 `CaptureAnchor`는 보관한 앵커를 그대로 돌려준다.
+- LastVisible은 뷰포트 끝에 걸친 항목의 끝을 같은 자리에 둔다. 끝에 붙어 있을 때 마지막 항목이 커져도 끝에 남지만, 뒤에 항목이 붙으면 보던 항목을 지키고 새 항목은 그 아래에 붙는다.
+  새 항목을 따라가려면 다시 읽기 전에 끝에 있었는지 보고 `ReloadData(ReloadAnchor.End)`를 쓴다.
 - 루프 모드에서는 스크롤 축 스크롤바를 ScrollRect에서 떼어 숨기고, 루프를 끄면 다시 붙인다.
-  `ScrollPosition`은 내부 슬롯 좌표이므로 저장·복원에는 `NormalizedScrollPosition`을 쓴다.
+  `ScrollPosition`은 내부 슬롯 좌표이므로 저장·복원에는 `NormalizedScrollPosition`이나 `CaptureAnchor`/`RestoreAnchor`를 쓴다.
 - 루프는 뷰포트·미리보기 길이를 덮고도 양쪽에 한 사이클씩 남도록 세트 수(최소 5)를 정한다. 셀 크기가 모두 0이면 루프하지 않는다.
 - ScrollRect를 끄면(스크롤 잠금) CyScroller도 입력을 무시한다. 코드로 시작한 점프는 계속 진행된다.
 - `ActiveCellViews`는 `IReadOnlyList`다. GC를 피하려면 `foreach` 대신 `for` + 인덱서로 순회한다.
