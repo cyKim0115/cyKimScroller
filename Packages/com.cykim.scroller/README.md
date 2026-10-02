@@ -9,7 +9,8 @@ uGUI `ScrollRect` 위에서 동작하는 가상화 스크롤러. 보이는 구�
 - 셀이 보이게만 옮기는 `ScrollIntoView` (Nearest·여백), 트윈 중 재배치·뷰포트 크기 변화가 일어나도 끊기거나 튀지 않고 새 목표로 이어 가는 트윈
 - 무한 루프 (짧은 목록도 뷰포트를 채우도록 세트 수 자동 결정, 재바인딩 없는 순환 보정, 드래그 중 기준점 재설정)
 - 스냅 (드래그·휠 후, 누르고 있는 동안은 대기), 속도 상한, 스크롤바 표시 모드
-- 스크롤 핫패스 GC 할당 0 (PlayMode 테스트로 검증)
+- 셀 훅: 실제 뷰포트 기준 표시 이벤트(lookAhead 구간 제외, 스크롤러 자체가 파괴될 때 말고는 항상 짝), 늦은 비동기 결과를 버리는 `BindVersion`, 캐러셀·휠 피커 연출용 뷰포트 위치 훅
+- 스크롤 핫패스 GC 할당 0 (PlayMode 테스트로 검증, 셀 훅을 켠 상태 포함)
 
 Unity 6000.0 이상, uGUI 2.0 이상 (6000.6.0f1 / uGUI 2.6.0에서 검증).
 
@@ -92,7 +93,9 @@ public class ItemCellView : CyScrollerCellView
 | 좌표 | `GetCellStart`, `GetCellSize`, `GetScrollPositionForDataIndex`, `GetScrollPositionForCellViewIndex`, `GetCellViewIndexAtPosition`, `GetDataIndexForCellViewIndex` |
 | 루프 | `Loop`, `LoopWhileDragging`, `ToggleLoop()`, `IgnoreLoopJump(bool)` |
 | 정리 | `ClearActive()`, `ClearRecycled()`, `ClearAll()`, `GetRecycledCellCount()` |
-| 이벤트 | `CellViewVisibilityChanged`, `CellViewInstantiated`, `CellViewReused`, `CellViewWillRecycle`, `ScrollerScrolled`, `ScrollerSnapped`, `ScrollerScrollingChanged`, `ScrollerTweeningChanged` |
+| 이벤트 | `CellViewVisibilityChanged`, `CellViewWillDisplay`, `CellViewDidEndDisplay`, `CellViewPositionChanged`, `CellViewInstantiated`, `CellViewReused`, `CellViewWillRecycle`, `ScrollerScrolled`, `ScrollerSnapped`, `ScrollerScrollingChanged`, `ScrollerTweeningChanged` |
+| 위치 훅 | `NotifyCellPositions`, `CellPositionPivot` |
+| 셀 뷰 | `DataIndex`, `CellIndex`, `Active`, `IsBound`, `IsDisplayed`, `BindVersion`, `RefreshCellView()`, `OnRecycled()`, `OnBecameVisible()`, `OnBecameHidden()`, `OnViewportPositionChanged(normalizedOffset)` |
 
 `scrollerOffset` / `cellOffset`은 0 = 앞(위·왼쪽), 0.5 = 가운데, 1 = 뒤. 가운데 정렬은 `JumpToDataIndex(i, 0.5f, 0.5f)`.
 
@@ -100,6 +103,30 @@ public class ItemCellView : CyScrollerCellView
 앞쪽에 걸리면 셀 시작을 뷰포트 시작에(Start), 뒤쪽이면 셀 끝을 뷰포트 끝에(End) 맞춘다. 셀이 여백까지 합쳐 뷰포트보다 크면 Start.
 `margin`은 셀 앞뒤로 남길 거리다 (Center는 쓰지 않음). 콘텐츠 끝 너머로는 남길 수 없으므로 첫·마지막 셀은 콘텐츠 끝까지 보이면 된다.
 선택 항목을 따라가는 목록이면 `ScrollIntoView(selected, margin: 8f)`.
+
+### 셀 훅
+
+셀 뷰는 "정말 보이는지"(`OnBecameVisible`/`OnBecameHidden`), "뷰포트 안 어디인지"(`OnViewportPositionChanged`),
+"지금 몇 번째 바인딩인지"(`BindVersion`)를 받을 수 있다. 위치 훅은 스크롤러의 `NotifyCellPositions`를 켜야 불린다.
+
+```csharp
+public class CardCellView : CyScrollerCellView
+{
+    [SerializeField] private RectTransform _visual;   // 루트가 아닌 자식만 변형한다
+
+    // 0 = 뷰포트 앞 가장자리, 0.5 = 가운데, 1 = 뒤 가장자리 (CellPositionPivot 지점 기준)
+    protected override void OnViewportPositionChanged(float normalizedOffset)
+    {
+        float distance = Mathf.Clamp01(Mathf.Abs(normalizedOffset - 0.5f) * 2f);
+        float scale = Mathf.Lerp(1f, 0.75f, distance);
+        _visual.localScale = new Vector3(scale, scale, 1f);
+    }
+
+    protected override void OnBecameVisible() { /* 등장 애니메이션·노출 기록 */ }
+}
+```
+
+비동기 로드(아이콘·썸네일)는 바인딩할 때 `BindVersion`을 기억해 두고, 끝났을 때 값이 다르면(그사이 재활용·재바인딩되거나 스크롤러와 함께 파괴됨) 결과를 버린다.
 
 ## 동작 규칙
 
@@ -130,6 +157,7 @@ public class ItemCellView : CyScrollerCellView
   가장자리 너머로 당기는 중(Elastic)에도 같다. 다만 가장자리를 당기던 거리보다 더 넘기지는 않으며, 이어지는 드래그의 고무줄 저항도 끊기지 않는다.
   드래그 중이 아니면 재배치 뒤 위치는 스크롤 범위 안으로 맞춘다.
 - 델리게이트·셀 이벤트 콜백 안에서 `ReloadData`·`ReloadDataKeepingPosition`·`Clear*`를 불러도 된다. 범위 갱신이 끝난 뒤 처리한다.
+  즉시 점프·`ScrollPosition` 대입은 바로 옮기고, 범위는 옛 위치 기준 작업을 멈춘 뒤 새 위치로 다시 맞춘다 (아래 셀 훅 동작).
 - 루프 모드에서는 스크롤 축 스크롤바를 ScrollRect에서 떼어 숨기고, 루프를 끄면 다시 붙인다.
   `ScrollPosition`은 내부 슬롯 좌표이므로 저장·복원에는 `NormalizedScrollPosition`을 쓴다.
 - 루프는 뷰포트·미리보기 길이를 덮고도 양쪽에 한 사이클씩 남도록 세트 수(최소 5)를 정한다. 셀 크기가 모두 0이면 루프하지 않는다.
@@ -137,10 +165,48 @@ public class ItemCellView : CyScrollerCellView
 - `ActiveCellViews`는 `IReadOnlyList`다. GC를 피하려면 `foreach` 대신 `for` + 인덱서로 순회한다.
 - Profiler에서 `CyScroller.UpdateActiveRange`(활성 범위 갱신, 셀 바인딩 포함)와 `CyScroller.Relayout`(위치 유지 재배치) 마커로 비용을 확인할 수 있다.
 
+### 셀 훅 동작
+
+`CellViewVisibilityChanged`는 0.1.0과 같은 활성화 기준이고, `CellViewWillDisplay`/`CellViewDidEndDisplay`는 실제 뷰포트 기준이다.
+
+| | `CellViewVisibilityChanged` | `CellViewWillDisplay` / `CellViewDidEndDisplay` |
+|---|---|---|
+| 기준 범위 | 활성 범위 = 뷰포트 + lookAhead 미리보기 구간 | 실제 뷰포트 (lookAhead 제외). 경계에 맞닿기만 한 셀은 넣지 않는다 |
+| 시점 | 셀을 활성화(바인딩)한 직후(`Active` true) / 회수 직전(`Active` false) | 뷰포트에 조금이라도 걸치기 시작할 때 / 완전히 벗어나거나 보이던 채로 회수되거나 `ClearActive`로 파괴될 때 |
+| 미리보기 구간 셀 | 받는다 | 받지 않는다 (뷰포트로 들어올 때 받는다) |
+| 셀 뷰 가상 메서드 | 없음 (회수는 `OnRecycled`) | `OnBecameVisible` / `OnBecameHidden` (각 이벤트 바로 뒤) |
+| 루프 순환 보정 | 오지 않는다 | 오지 않는다 |
+| 쓰임 | 바인딩 부가 작업, 풀·리소스 관리 | 등장 애니메이션, 노출 기록, 동영상 재생·정지 |
+
+- 한 번의 범위 갱신은 표시 끝(`CellViewDidEndDisplay` → `OnBecameHidden`) → 회수(`CellViewWillRecycle` → `OnRecycled` → `CellViewVisibilityChanged`)
+  → 활성화(델리게이트 `GetCellView` → `CellViewVisibilityChanged` → 위치 훅) → 표시 시작(`CellViewWillDisplay` → `OnBecameVisible`) 순서다.
+  활성 범위는 그대로이고 미리보기 구간 셀만 뷰포트에 드나들면 표시 이벤트만 온다.
+- 표시 시작과 끝은 셀마다 항상 짝이 맞는다. 보이던 셀이 `ReloadData`·`ClearActive`·재배치로 회수·파괴될 때도 표시 끝을 먼저 받는다.
+  이벤트 핸들러가 예외를 던져도 가상 메서드는 불리고 활성 목록·표시 범위 장부는 어긋나지 않는다. 콜백 안 `ReloadData` 등은 다른 콜백과 같이 범위 갱신이 끝난 뒤 처리한다.
+- 예외는 스크롤러 자체가 파괴될 때(팝업 닫기·씬 언로드)다. 파괴 순서가 정해져 있지 않아 사용자 코드를 부르지 않고 활성 셀의 바인딩만 푼다(`BindVersion` 증가, `IsBound` false).
+  표시 끝은 오지 않고 `IsDisplayed`가 마지막 값으로 남으므로, 표시 중 시작한 일(노출 타이머 등)은 셀의 `OnDestroy`에서 `IsDisplayed`를 보고 정리한다.
+- 범위 갱신 콜백(델리게이트 `GetCellView`, 셀 이벤트, `OnRecycled`·`OnBecameVisible` 같은 셀 뷰 가상 메서드) 안에서 즉시 점프·`ScrollPosition` 대입으로 콘텐츠를 옮기면
+  옛 위치 기준으로 남은 회수·활성화·표시 이벤트를 멈추고 새 위치로 범위를 다시 맞춘다. 표시 시작은 그 순간 뷰포트에 걸친 셀에만 온다.
+  루프 순환 보정은 콜백 안에서는 미뤘다가 다시 맞추기 직전에 하므로, 한 번에 활성화하는 셀은 뷰포트 + 미리보기 구간 분량을 넘지 않는다.
+  콜백이 매번 다시 옮기면 4번까지만 다시 맞추고 나머지는 다음 LateUpdate에 이어 간다.
+  콜백 안에서 바로 끝난 스냅(즉시 `Snap()` 등)의 `ScrollerSnapped`는 범위를 다시 맞춘 뒤에 오므로 셀 번호와 셀 뷰가 순환 보정 뒤 새 위치 기준이다.
+  점프 완료 콜백은 콜백 안에서 바로 불린다.
+- `BindVersion`은 셀이 데이터에 바인딩될 때(활성화할 슬롯용으로 `GetCellView(prefab)`가 내줄 때)와 바인딩이 풀릴 때(회수, `ClearActive`로 파괴, 활성인 채로 스크롤러와 함께 파괴) 1씩 는다.
+  델리게이트 `GetCellView` 안에서 읽은 값이 그 바인딩의 값이다. `RefreshCellView`·루프 순환 보정처럼 같은 데이터로 남으면 늘지 않는다. `IsBound`는 `DataIndex >= 0`이다.
+- 위치 훅(`NotifyCellPositions`)은 위치·활성 범위·레이아웃·뷰포트 크기가 바뀐 프레임에 한 번, 스크롤러 LateUpdate 끝(실행 순서 100)에서 활성 셀마다
+  `CellViewPositionChanged` → `OnViewportPositionChanged`를 부른다.
+  normalizedOffset = (셀 시작 + 셀 크기 × `CellPositionPivot` − 뷰포트 시작) / 뷰포트 길이. 0 = 앞(위·왼쪽) 가장자리, 0.5 = 가운데, 1 = 뒤 가장자리이고, 미리보기 구간 셀은 0 미만·1 초과가 될 수 있다.
+  - 새로 활성화된 셀(리로드 직후 포함)은 활성화 즉시 한 번 받으므로 재사용된 뷰가 이전 모습으로 한 프레임 보이지 않는다.
+  - 스크롤러 LateUpdate 뒤(더 늦은 실행 순서의 LateUpdate·코루틴 등)에서 위치가 바뀌면 다음 프레임 LateUpdate에 반영된다.
+  - 아무것도 바뀌지 않은 프레임에는 부르지 않고, 꺼져 있으면 계산 자체를 건너뛴다. 뷰포트 길이가 0이면 부르지 않는다. 레이아웃 캐시로만 계산해 할당이 없다.
+  - 셀 루트 RectTransform은 스크롤러가 배치하므로 위치 훅에서는 자식(스케일·회전·투명도)만 바꾼다.
+- 셀 뷰 훅(`OnBecameVisible`·`OnBecameHidden`·`OnViewportPositionChanged`)은 `protected internal`이다. 다른 어셈블리에서는 `protected override`로 재정의한다.
+
 ## 샘플
 
 Package Manager → CyKim Scroller → Samples → **Basic** Import.
-빈 씬의 GameObject에 `BasicSample`을 붙이고 Play하면 세로 목록·점프 버튼·루프 캐러셀이 만들어진다.
+빈 씬의 GameObject에 `BasicSample`을 붙이고 Play하면 세로 목록·점프 버튼·휠 피커·루프 캐러셀이 만들어진다.
+휠 피커와 캐러셀은 위치 훅으로 행·카드 모양을 그린다.
 
 ## 다른 목록 UI와 비교
 
