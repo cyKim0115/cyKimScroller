@@ -34,7 +34,10 @@
 
 | 개념 | CyKim Scroller | UIKit | Android | UI Toolkit |
 |---|---|---|---|---|
-| 셀 표시·숨김 | `CellViewVisibilityChanged` | `willDisplay` / `didEndDisplaying` | `onViewAttachedToWindow` / `onViewDetachedFromWindow` | `bindItem` / `unbindItem` |
+| 셀 활성화·회수 (미리보기 구간 포함) | `CellViewVisibilityChanged` | — | `onViewAttachedToWindow` / `onViewDetachedFromWindow` | `bindItem` / `unbindItem` |
+| 실제 표시 시작·끝 (미리보기 구간 제외) | `CellViewWillDisplay` / `CellViewDidEndDisplay`, 셀 뷰 `OnBecameVisible()` / `OnBecameHidden()` | `tableView(_:willDisplay:forRowAt:)` / `tableView(_:didEndDisplaying:forRowAt:)` | — (`OnScrollListener`에서 `findFirstVisibleItemPosition()` 등으로 계산) | — |
+| 늦은 비동기 결과 버리기 | `BindVersion` (바인딩 때 기억, 끝날 때 비교), `IsBound` | `prepareForReuse()`에서 작업 취소, 또는 완료 때 `indexPath(for:)` 재확인 | `onViewRecycled()`에서 작업 취소, 또는 `getBindingAdapterPosition()` 재확인 | `unbindItem`에서 작업 취소 |
+| 뷰포트 안 셀 위치 (캐러셀·휠 연출) | `NotifyCellPositions` + 셀 뷰 `OnViewportPositionChanged(normalizedOffset)`, `CellViewPositionChanged` | `scrollViewDidScroll(_:)`에서 셀 frame 변환, 또는 `UICollectionViewLayout` 레이아웃 속성 | `OnScrollListener`에서 자식 뷰 위치 계산, 또는 커스텀 `LayoutManager` | — |
 | 스크롤 중 | `ScrollerScrolled`, `ScrollerScrollingChanged` | `scrollViewDidScroll(_:)` | `OnScrollListener` | 스크롤바 `valueChanged` |
 | 스냅 | `Snapping` + `ScrollerSnapped` | `isPagingEnabled`, `scrollViewWillEndDragging(_:withVelocity:targetContentOffset:)` | `LinearSnapHelper` / `PagerSnapHelper` | — |
 | 무한 루프 | `Loop`, `LoopJumpDirection` | — | — | — |
@@ -50,4 +53,7 @@
 | 점프 후 리사이즈 | 점프·스냅·ScrollIntoView 정렬을 유지한다 |
 | 트윈 목표 | 좌표 대신 요청(셀·정렬 위치·여백)을 저장하고 매 프레임 지금 배치에서 다시 계산한다. 트윈 중 재배치·뷰포트 크기 변화가 일어나도 맨 앞 셀 기준 화면을 그대로 두고 끊지 않고 이어 가며, 다음 프레임에 화면이 튀지 않게 시작점을 다시 잡아 같은 시각에 끝낸다. 마지막 프레임 콜백이 요청한 재배치도 끝내기 전에 처리하고, 완료 콜백은 끝에서 한 번 |
 | 콜백 안 리로드 | 범위 갱신이 끝난 뒤 처리한다 (재질의 포함) |
+| 콜백 안 이동 | 즉시 점프·위치 대입은 바로 옮기고, 범위 갱신은 옛 위치 기준의 남은 작업을 멈춘 뒤 새 위치로 다시 맞춘다. 루프 순환 보정(슬롯 번호 이동)은 범위 계산 도중에 하지 않고 다시 맞추기 직전에 한다. 다시 맞추기는 한 번에 최대 4번, 나머지는 다음 LateUpdate |
+| 표시 이벤트 | 실제 뷰포트에 걸친 슬롯 범위를 활성 범위와 따로 추적하고, 범위 갱신마다 이전 범위와의 차이만큼만 알린다 (O(변경 수)). 셀마다 표시 플래그로 짝을 지키고, 보이던 셀은 회수·`ClearActive` 파괴 전에 표시 끝을 받는다. 스크롤러 자체가 파괴될 때는 사용자 코드 없이 활성 셀의 바인딩만 푼다 |
+| 위치 훅 | 레이아웃 캐시(슬롯 시작·크기)로만 계산한다. 위치·범위·레이아웃·뷰포트 크기가 바뀐 프레임에만 LateUpdate 끝에서 한 번 돌고, 새 셀은 활성화 즉시 받는다. 꺼져 있으면 건너뛴다 |
 | 코드로 콘텐츠 이동 | 루프 순환 보정·위치 유지 재배치가 한 이동 루틴을 쓴다. 드래그 중이면 손가락 기준점과 직전 위치를 같이 옮겨 놓을 때 관성 속도가 튀지 않는다. 가장자리 너머로 당기는 중이면 당긴 거리와 고무줄 저항을 이어 간다 |
