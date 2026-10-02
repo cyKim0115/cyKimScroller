@@ -10,6 +10,9 @@ namespace CyKim.Scroller.Tests
         /// <summary>델리게이트가 바인딩하면서 읽은 <see cref="CyScrollerCellView.BindVersion"/> (비동기 로드가 캡처하는 값).</summary>
         public int BoundVersion = -1;
 
+        /// <summary>ID를 주는 델리게이트가 바인딩하면서 읽은 <see cref="CyScrollerCellView.ItemId"/> (ID가 없으면 -1).</summary>
+        public long BoundItemId = -1;
+
         public int RefreshCount;
         public int RecycledCount;
         public int BecameVisibleCount;
