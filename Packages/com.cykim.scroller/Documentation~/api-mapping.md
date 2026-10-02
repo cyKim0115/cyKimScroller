@@ -13,13 +13,16 @@
 | 재사용 풀 키 | `CyScrollerCellView.CellIdentifier` | `reuseIdentifier` | `getItemViewType()` | 템플릿 하나 |
 | 재활용 직전 훅 | `OnRecycled()`, `CellViewWillRecycle` | `prepareForReuse()` | `onViewRecycled()` | `unbindItem` |
 | 셀이 보이는 데이터 인덱스 | `DataIndex` (루프 슬롯은 `CellIndex`) | `indexPath` | `getBindingAdapterPosition()` | `bindItem`의 index |
+| 항목 안정 ID | `ICyScrollerItemIdProvider.GetItemId` (델리게이트가 선택 구현), 셀 뷰 `ItemId` | diffable data source의 항목 식별자 (`NSDiffableDataSourceSnapshot`) | `Adapter.getItemId()` + `setHasStableIds(true)` | — |
 
 ## 갱신과 이동
 
 | 개념 | CyKim Scroller | UIKit | Android | UI Toolkit |
 |---|---|---|---|---|
-| 전체 다시 읽기 | `ReloadData(scrollPositionFactor)` | `reloadData()` | `notifyDataSetChanged()` | `RefreshItems()` / `Rebuild()` |
-| 위치를 지키며 다시 읽기 | `ReloadDataKeepingPosition()` | — | — | — |
+| 전체 다시 읽기 | `ReloadData()` / `ReloadData(scrollPositionFactor)` / `ReloadData(ReloadAnchor.Start / End)` | `reloadData()` | `notifyDataSetChanged()` | `RefreshItems()` / `Rebuild()` |
+| 위치를 지키며 다시 읽기 | `ReloadDataKeepingPosition()`, `ReloadData(ReloadAnchor.FirstVisible / LastVisible)` (항목 ID가 있으면 ID로 같은 항목, LastVisible은 아래쪽 기준) | — | — | — |
+| 스크롤 위치 저장·복원 | `CaptureAnchor(trailing)` / `RestoreAnchor(anchor)` (`CyScrollerAnchor`: 항목 + 뷰포트 가장자리까지 거리, 데이터·뷰포트가 준비되기 전 요청은 보관) | — (`contentOffset` 좌표를 저장) | `LayoutManager.onSaveInstanceState()` / `onRestoreInstanceState()` (맨 앞 항목 위치·오프셋, 항목이 생길 때까지 보관), `scrollToPositionWithOffset()` | — |
+| ID로 인덱스 찾기 | `FindDataIndexForItemId(itemId)` | `UITableViewDiffableDataSource.indexPath(for:)` | — (`findViewHolderForItemId()`는 붙어 있는 뷰만) | — |
 | 보이는 셀만 다시 그리기 | `RefreshActiveCellViews()` | `reconfigureRows(at:)` | `notifyItemRangeChanged()` | `RefreshItem(index)` |
 | 항목으로 이동 | `JumpToDataIndex(...)` (정렬 비율·트윈·완료 콜백) | `scrollToRow(at:at:animated:)` | `scrollToPositionWithOffset()` / `smoothScrollToPosition()` | `ScrollToItem(index)` |
 | 항목이 보이게만 이동 | `ScrollIntoView(dataIndex, ScrollAlign, margin, ...)` (`Nearest`: 이미 보이거나 더 움직일 수 없으면 그대로(드래그·관성 유지), 아니면 최소 이동. 여백은 콘텐츠 끝까지만) | `scrollToRow(at:at:animated:)`의 `.none` (`.top`·`.middle`·`.bottom` = Start·Center·End) | `scrollToPosition()` / `LinearSmoothScroller`의 `SNAP_TO_ANY` (`SNAP_TO_START`·`SNAP_TO_END`) | `ScrollToItem(index)` |
@@ -56,4 +59,5 @@
 | 콜백 안 이동 | 즉시 점프·위치 대입은 바로 옮기고, 범위 갱신은 옛 위치 기준의 남은 작업을 멈춘 뒤 새 위치로 다시 맞춘다. 루프 순환 보정(슬롯 번호 이동)은 범위 계산 도중에 하지 않고 다시 맞추기 직전에 한다. 다시 맞추기는 한 번에 최대 4번, 나머지는 다음 LateUpdate |
 | 표시 이벤트 | 실제 뷰포트에 걸친 슬롯 범위를 활성 범위와 따로 추적하고, 범위 갱신마다 이전 범위와의 차이만큼만 알린다 (O(변경 수)). 셀마다 표시 플래그로 짝을 지키고, 보이던 셀은 회수·`ClearActive` 파괴 전에 표시 끝을 받는다. 스크롤러 자체가 파괴될 때는 사용자 코드 없이 활성 셀의 바인딩만 푼다 |
 | 위치 훅 | 레이아웃 캐시(슬롯 시작·크기)로만 계산한다. 위치·범위·레이아웃·뷰포트 크기가 바뀐 프레임에만 LateUpdate 끝에서 한 번 돌고, 새 셀은 활성화 즉시 받는다. 꺼져 있으면 건너뛴다 |
+| 항목 ID·앵커 | 델리게이트를 다시 받을 때만 항목 ID를 받아 인덱스별 배열과 ID → 인덱스 사전을 채운다 (O(N), 스크롤 중에는 배열만 읽어 할당 없음). 앵커는 항목(ID·인덱스)과 뷰포트 앞 또는 뒤 가장자리까지 거리이고, 복원은 ID → 인덱스 순으로 찾는다. ID는 앵커 인덱스 자리에 같은 ID가 남아 있으면 그 자리를 먼저 써서(O(1)) 중복 ID라도 데이터가 그대로면 제자리다. 로드 전·데이터 0개·뷰포트 길이 0일 때 받은 복원은 보관했다가 준비되면(재배치면 그 재배치 안에서) 적용하고, 코드로 부른 새 위치 요청이 오면 갈 셀이 없어도 버린다. 드래그·휠 뒤 자동 스냅은 보관 중에는 기다리고, 적용할 때 남은 관성과 스냅 대기를 멈춘다 |
 | 코드로 콘텐츠 이동 | 루프 순환 보정·위치 유지 재배치가 한 이동 루틴을 쓴다. 드래그 중이면 손가락 기준점과 직전 위치를 같이 옮겨 놓을 때 관성 속도가 튀지 않는다. 가장자리 너머로 당기는 중이면 당긴 거리와 고무줄 저항을 이어 간다 |

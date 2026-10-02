@@ -115,6 +115,11 @@ private bool _hasTweenRequest;   // 루프 재중심 때 Slot도 함께 이동
 ### ③ 안정 ID와 위치 보존 리로드 (6·7위, S+S)
 - 데이터가 0개이거나 뷰포트 크기가 0일 때 들어온 복원·점프 요청은 `_pendingAnchor`에 보관합니다. 다음 `ReloadData`(N > 0)나 `CheckViewportResize`에서 적용합니다. 리로드 직후 점프하면 빈 화면이 나오는 문제가 이것으로 해결됩니다.
 - `ReloadDataKeepingPosition()`은 `ReloadData(ReloadAnchor.FirstVisible)`의 별칭으로 남깁니다.
+- 구현 반영(③): 보관하는 것은 복원 요청(`RestoreAnchor`·`ReloadData(in anchor)`)뿐이고, 점프·`ScrollIntoView`·`Snap`은 갈 셀이 없어도 보관한 앵커를 버립니다(빈 목록 점프는 지금처럼 바로 완료).
+  드래그·휠 뒤 자동 스냅은 보관 중에는 기다리고, 앵커를 적용할 때 남은 관성과 스냅 대기를 멈춥니다.
+  `ReloadDataKeepingPosition()`은 별칭이 아니라 트윈·정렬을 이어 가는 기존 재배치에 ID 찾기를 더했습니다(ID가 있으면 정렬 대상도 ID로 찾아 유지).
+  같은 ID가 여럿이면 ID 조회는 앞 인덱스지만, 앵커 복원·정렬 유지는 이전 인덱스 자리에 같은 ID가 남아 있으면 그 자리를 씁니다(데이터가 그대로면 제자리).
+  매개변수 없는 `ReloadData()`는 보관한 앵커를 적용하고 `ReloadData(factor)`는 버립니다. LastVisible은 보던 아래쪽 항목을 지키고, 끝 따라가기는 13위(채팅 모드)에 남깁니다.
 ```csharp
 public interface ICyScrollerItemIdProvider          // 선택 구현. Delegate setter에서 as 캐스트 1회
 {
