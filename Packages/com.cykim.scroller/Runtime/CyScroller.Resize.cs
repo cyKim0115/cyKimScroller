@@ -27,7 +27,7 @@ namespace CyKim.Scroller
         private readonly List<UpdateOp> _resizeStepOps = new List<UpdateOp>(4);
 
         /// <summary>
-        /// 셀 크기 애니메이션(<see cref="ResizeCellView"/>에 시간을 준 요청)이 진행 중인지.
+        /// 셀 크기 애니메이션(<see cref="ResizeCellView"/>에 시간을 준 요청)이 진행 중인지. 진행 중이면 <see cref="IsSettled"/>는 false다.
         /// </summary>
         public bool IsResizing => _resizeAnimations.Count > 0;
 
@@ -48,7 +48,8 @@ namespace CyKim.Scroller
         /// 점프·스냅·<see cref="ScrollIntoView"/> 정렬이 유지되는 중이면 정렬이 앵커보다 먼저다. 진행 중인 트윈은 새 배치의 목표로 이어 간다.</para>
         /// <para>애니메이션은 LateUpdate에서 매 프레임 크기를 바꾸고 기준에 맞춰 스크롤 위치를 옮긴다(드래그 중이면 손가락 기준점도). 같은 항목에 새 요청이 오면 지금 크기에서 이어 간다.
         /// 그 항목이 지워지거나 <see cref="ReloadCellView"/>·<see cref="ReloadData()"/>·<see cref="ReloadDataKeepingPosition"/>처럼 크기를 다시 읽으면 애니메이션을 버리고 그 크기를 따른다.
-        /// 증분 변경 배치가 열려 있는 동안에는 멈췄다가 닫히면 이어 간다.</para>
+        /// 증분 변경 배치가 열려 있는 동안에는 멈췄다가 닫히면 이어 간다.
+        /// 애니메이션이 도는 동안(화면 밖 항목 포함)은 정착이 아니며(<see cref="IsSettled"/>), 끝난 프레임에 <see cref="ScrollerSettled"/>가 온다. 지금 크기와 같으면 애니메이션을 시작하지 않는다.</para>
         /// <para>루프 모드에서는 애니메이션 없이 바로 바꾸고, 위치를 지키는 재배치로 맞추므로 활성 셀을 다시 바인딩하고 앵커는 <see cref="ResizeAnchor.Auto"/>를 따른다.
         /// 델리게이트·셀 이벤트 콜백 안에서 부르면 다른 증분 변경처럼 범위 갱신 뒤 앵커 보존 리로드로 바뀐다(셀을 다시 바인딩하고 애니메이션 없이 바로 바뀐다).
         /// 로드 전에는 아무것도 하지 않는다(첫 리로드가 전부 읽는다).</para>

@@ -41,7 +41,7 @@ namespace CyKim.Scroller
     /// <summary>점프·스냅 트윈 상태가 바뀔 때.</summary>
     public delegate void ScrollerTweeningChangedHandler(CyScroller scroller, bool tweening);
 
-    /// <summary>움직이던 스크롤러가 정착했을 때 (드래그·관성·트윈·스냅 대기가 모두 끝남). <see cref="CyScroller.IsSettled"/>.</summary>
+    /// <summary>움직이던 스크롤러가 정착했을 때 (드래그·관성·트윈·스냅 대기·크기 애니메이션이 모두 끝남). <see cref="CyScroller.IsSettled"/>.</summary>
     public delegate void ScrollerSettledHandler(CyScroller scroller);
 
     /// <summary>고속 스크롤 상태가 바뀔 때. <see cref="CyScroller.IsFastScrolling"/>.</summary>

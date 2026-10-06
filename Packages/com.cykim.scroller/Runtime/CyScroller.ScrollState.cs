@@ -16,7 +16,7 @@ namespace CyKim.Scroller
         private float _tweenStepSpeed;
 
         /// <summary>
-        /// 움직이던 스크롤러가 정착했을 때 한 번 (드래그 중이 아니고, 트윈·스냅 대기가 없고, 스크롤 속도가 <see cref="SettleVelocityThreshold"/> 이하).
+        /// 움직이던 스크롤러가 정착했을 때 한 번 (드래그 중이 아니고, 트윈·스냅 대기·크기 애니메이션이 없고, 스크롤 속도가 <see cref="SettleVelocityThreshold"/> 이하).
         /// LateUpdate 끝에서 바뀐 것을 알린다. 첫 로드 직후에는 오지 않는다. 이 이벤트 뒤에도 정착해 있으면 활성 셀마다
         /// <see cref="CyScrollerCellView.OnScrollerSettled"/>를 부른다 (핸들러가 다시 움직이게 했으면 부르지 않는다).
         /// </summary>
@@ -28,12 +28,13 @@ namespace CyKim.Scroller
         public event ScrollerFastScrollingChangedHandler ScrollerFastScrollingChanged;
 
         /// <summary>
-        /// 지금 정착해 있는지: 로드 전이거나, 드래그 중이 아니고 트윈·스냅 대기가 없고 관성 속도가 <see cref="SettleVelocityThreshold"/> 이하이며
+        /// 지금 정착해 있는지: 로드 전이거나, 드래그 중이 아니고 트윈·스냅 대기·크기 애니메이션(<see cref="IsResizing"/>)이 없고 관성 속도가 <see cref="SettleVelocityThreshold"/> 이하이며
         /// 가장자리 너머에서 탄성으로 되돌아오는 중이 아니다. 바로 계산한 값이다 (<see cref="ScrollerSettled"/>는 LateUpdate에서 바뀐 것을 알린다).
         /// </summary>
         /// <remarks>
         /// <see cref="IsScrolling"/>은 드래그·관성(트윈 제외), <see cref="IsTweening"/>은 점프·스냅 트윈만 본다.
-        /// 이 값은 둘 다 끝나고 스냅 대기도 없을 때 true이고, 관성이 아주 느려진 끝(임계값 이하)도 정착으로 본다.
+        /// 이 값은 둘 다 끝나고 스냅 대기·크기 애니메이션도 없을 때 true이고, 관성이 아주 느려진 끝(임계값 이하)도 정착으로 본다.
+        /// 크기 애니메이션은 화면 밖 항목이어도 끝날 때까지 정착이 아니다.
         /// 휠·스크롤바 이동은 ScrollRect가 속도 없이 위치만 바꾸므로 정착으로 본다(스냅을 켜면 휠 뒤 스냅 대기 동안은 정착이 아니다).
         /// </remarks>
         public bool IsSettled => !_hasLoaded || IsSettledAt(Mathf.Abs(LinearVelocity));
@@ -78,7 +79,7 @@ namespace CyKim.Scroller
         private bool IsSettledAt(float speed)
         {
             bool snapPending = _snapping && _snapArmed && !_hasPendingAnchor;
-            return !_dragging && !_tweening && !snapPending && speed <= _settleVelocityThreshold && !IsReturningFromOverscroll();
+            return !_dragging && !_tweening && !snapPending && !IsResizing && speed <= _settleVelocityThreshold && !IsReturningFromOverscroll();
         }
 
         /// <summary>
