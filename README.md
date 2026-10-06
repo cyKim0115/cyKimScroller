@@ -26,13 +26,10 @@ Unity uGUI `ScrollRect` 위에서 동작하는 가상화 스크롤러. 보이는
 ```json
 {
   "dependencies": {
-    "com.cykim.scroller": "https://github.com/cyKim0115/cyKimScroller.git?path=/Packages/com.cykim.scroller#v0.2.0"
+    "com.cykim.scroller": "https://github.com/cyKim0115/cyKimScroller.git?path=/Packages/com.cykim.scroller#v0.2.1"
   }
 }
 ```
-
-이 저장소는 **private**이다. 받으려면 저장소 접근 권한이 있어야 하고, Unity Package Manager가 쓰는 git에 GitHub 인증이 잡혀 있어야 한다
-(HTTPS는 Git Credential Manager, SSH는 `git@github.com:cyKim0115/cyKimScroller.git?path=/Packages/com.cykim.scroller#v0.2.0` 형식).
 
 Unity 6000.0 이상, uGUI 2.0 이상 (6000.6.0f1 / uGUI 2.6.0에서 검증).
 

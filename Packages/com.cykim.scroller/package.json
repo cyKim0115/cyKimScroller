@@ -1,6 +1,6 @@
 {
   "name": "com.cykim.scroller",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "displayName": "CyKim Scroller",
   "description": "Virtualized uGUI ScrollRect with cell view recycling, variable cell sizes, jumping with tweens, looping and snapping. Only the visible cells exist; everything else is empty scroll extent.",
   "unity": "6000.0",

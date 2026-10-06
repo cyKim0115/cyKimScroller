@@ -2,7 +2,7 @@
 
 이 패키지의 변경 내역. 형식은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/), 버전은 [SemVer](https://semver.org/lang/ko/)를 따른다.
 
-## [Unreleased]
+## [0.2.1] - 2026-10-06
 
 ### Changed
 - 라이선스를 MIT로 바꾼다 (`LICENSE.md`, `package.json`의 `license`). 저장소 루트에도 같은 `LICENSE`를 둔다
