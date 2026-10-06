@@ -1,0 +1,8 @@
+# GitBook Git Sync 설정. structure 경로는 root 기준이다.
+# 첫 동기화 방향은 반드시 "GitHub → GitBook"으로 고른다 (반대 방향은 저장소 내용을 GitBook 내용으로 덮어쓴다).
+# 목차는 SUMMARY.md에 적은 파일만 가져온다. 새 페이지는 SUMMARY.md에 추가한다.
+root: ./
+
+structure:
+  readme: README.md
+  summary: SUMMARY.md
