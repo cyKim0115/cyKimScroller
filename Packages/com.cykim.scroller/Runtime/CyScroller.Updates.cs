@@ -121,7 +121,8 @@ namespace CyKim.Scroller
         /// <para>뷰포트 맨 앞 항목보다 앞에서 생긴 크기 변화만큼 스크롤 위치를 옮겨 화면이 움직이지 않는다(드래그 중이면 손가락 기준점도).
         /// 맨 앞 항목이 지워지거나 <see cref="MoveCell"/>로 다른 자리로 옮겨지면 화면은 그 항목을 따라가지 않고, 그 자리에 온 다음 항목이 같은 거리에 온다
         /// (이동은 그 자리에서 지우고 새 자리에 삽입한 것과 같다. 같은 배치에서 그 빈자리에 삽입한 항목이 있으면 그 항목이 자리를 채운다). 결과는 스크롤 범위로 자른다.
-        /// 진행 중인 트윈·점프 정렬과 보관한 앵커(<see cref="RestoreAnchor"/>)는 같은 항목을 향하게 옮긴다(옮겨진 항목도 따라간다).
+        /// 진행 중인 트윈·점프 정렬과 보관한 앵커(<see cref="RestoreAnchor"/>)는 같은 항목을 향하게 옮긴다(진행 중인 트윈·보관한 앵커는 옮겨진 항목도 따라가고,
+        /// 끝난 점프의 정렬은 대상이 옮겨지면 풀려 화면을 지킨다).
         /// 트윈·정렬 대상이 지워지면 트윈을 멈추고(완료 콜백·스냅 이벤트 없음) 정렬을 푼다.</para>
         /// <para>연산을 반영한 개수가 <see cref="ICyScrollerDelegate.GetNumberOfCells"/>와 다르면(연산이 없는 배치 포함) 경고하고 <see cref="ReloadData(ReloadAnchor, float)"/>(FirstVisible)로 다시 읽는다.
         /// 루프 모드도 증분 대신 같은 리로드로 바꾸고, 델리게이트·셀 이벤트 콜백 안에서 끝난 배치는 같은 리로드를 범위 갱신이 끝난 뒤로 미룬다.
@@ -263,7 +264,7 @@ namespace CyKim.Scroller
         /// <remarks>
         /// 호출 시점 규칙은 <see cref="InsertCells"/>와 같다. 뷰포트 맨 앞 항목을 옮기면 화면은 그 항목을 따라가지 않는다.
         /// 그 자리에서 지우고 새 자리에 삽입한 것처럼, 그 자리에 온 다음 항목이 같은 거리에 오고 새 자리가 맨 앞 항목보다 앞이면 그 크기만큼 보정한다.
-        /// 진행 중인 트윈·점프 정렬의 대상이면 그 이동은 옮겨진 항목을 따라간다.
+        /// 진행 중인 트윈의 대상이면 트윈은 옮겨진 항목을 따라간다. 끝난 점프의 정렬 대상이면 정렬을 풀고 화면을 지킨다(정렬이 따라가면 화면이 그 항목으로 튄다).
         /// </remarks>
         public void MoveCell(int fromDataIndex, int toDataIndex)
         {
@@ -736,11 +737,13 @@ namespace CyKim.Scroller
             CyScrollerAnchor anchor = CaptureLayoutAnchor(false, out float overscroll);
 
             // 트윈·정렬 대상을 같은 항목으로 옮긴다. 지워졌으면 트윈을 멈추고(완료 콜백·스냅 이벤트 없음) 정렬을 푼다.
+            // 끝난 점프의 정렬 대상이 MoveCell로 옮겨졌으면 정렬을 푼다. 따라가면 화면이 옮겨진 항목으로 튀므로 보던 화면을 지킨다(맨 앞 항목 이동과 같은 규칙).
+            // 진행 중인 트윈은 옮겨진 항목을 따라간다.
             bool tweening = _tweening;
             int alignIndex = -1;
             if (_alignmentActive)
             {
-                alignIndex = MapThroughUpdates(ops, _align.Slot, out bool alignRemoved);
+                alignIndex = MapThroughUpdates(ops, _align.Slot, out bool alignRemoved, out bool alignMoved);
                 if (alignRemoved)
                 {
                     if (tweening)
@@ -750,6 +753,10 @@ namespace CyKim.Scroller
                         tweening = false;
                     }
 
+                    _alignmentActive = false;
+                }
+                else if (alignMoved && !tweening)
+                {
                     _alignmentActive = false;
                 }
             }
@@ -1266,7 +1273,14 @@ namespace CyKim.Scroller
         /// </summary>
         private static int MapThroughUpdates(List<UpdateOp> ops, int index, out bool removed)
         {
+            return MapThroughUpdates(ops, index, out removed, out _);
+        }
+
+        /// <summary><see cref="MapThroughUpdates(List{UpdateOp}, int, out bool)"/>에 더해, 그 항목 자신이 <see cref="MoveCell"/>로 옮겨졌으면 moved가 true다 (지워지기 전까지).</summary>
+        private static int MapThroughUpdates(List<UpdateOp> ops, int index, out bool removed, out bool moved)
+        {
             removed = false;
+            moved = false;
             for (int i = 0; i < ops.Count; i++)
             {
                 UpdateOp op = ops[i];
@@ -1292,6 +1306,11 @@ namespace CyKim.Scroller
 
                         break;
                     case UpdateOpType.Move:
+                        if (!removed && index == op.A && op.A != op.B)
+                        {
+                            moved = true;
+                        }
+
                         index = MoveIndex(index, op.A, op.B);
                         break;
                     default:
