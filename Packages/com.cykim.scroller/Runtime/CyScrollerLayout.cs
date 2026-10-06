@@ -17,7 +17,7 @@ namespace CyKim.Scroller
         // 짧은 사이클(크기 0 셀 등)에서 세트 수가 폭주하지 않게 막는 상한.
         private const int MAX_LOOP_HALF_SETS = 512;
 
-        // 아직 받지 않은 크기 (InsertSizes가 넣는다). SetSize는 음수를 0으로 자르므로 이 값은 InsertSizes만 만든다.
+        // 아직 받지 않은 크기 (InsertSizes·InvalidateSize가 넣는다). SetSize는 음수를 0으로 자르므로 이 값은 그 둘만 만든다.
         private const float UNSET_SIZE = -1f;
 
         private float[] _sizes = Array.Empty<float>();
@@ -74,8 +74,18 @@ namespace CyKim.Scroller
 
         public float GetSize(int dataIndex) => _sizes[dataIndex];
 
-        /// <summary>아직 받지 않은 크기인지 (<see cref="InsertSizes"/>로 끼운 뒤 <see cref="SetSize"/> 전).</summary>
+        /// <summary>아직 받지 않은 크기인지 (<see cref="InsertSizes"/>로 끼웠거나 <see cref="InvalidateSize"/>로 지운 뒤 <see cref="SetSize"/> 전).</summary>
         public bool IsSizeUnset(int dataIndex) => _sizes[dataIndex] < 0f;
+
+        /// <summary>
+        /// index 크기를 받지 않은 상태로 되돌린다 (항목을 다시 받을 때). 자리는 그대로이고 <see cref="Build"/> 전에 <see cref="SetSize"/>로 채운다.
+        /// index는 [0, DataCount) 안이어야 한다.
+        /// </summary>
+        public void InvalidateSize(int index)
+        {
+            _sizes[index] = UNSET_SIZE;
+            InvalidateStartsAfter(index);
+        }
 
         /// <summary>
         /// index 앞에 크기 count개 자리를 끼운다 (뒤쪽은 Array.Copy로 민다). 끼운 자리는 받지 않은 크기라 <see cref="Build"/> 전에 <see cref="SetSize"/>로 채운다.

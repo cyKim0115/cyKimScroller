@@ -15,7 +15,7 @@ namespace CyKim.Scroller
     {
         /// <summary>
         /// dataIndex 항목의 안정 ID. <see cref="CyScroller.ReloadData()"/>·<see cref="CyScroller.ReloadDataKeepingPosition"/>처럼
-        /// 델리게이트를 다시 받을 때 항목 수만큼, <see cref="CyScroller.InsertCells"/> 때는 삽입한 항목에만 불린다 (스크롤 중에는 불리지 않는다).
+        /// 델리게이트를 다시 받을 때 항목 수만큼, <see cref="CyScroller.InsertCells"/>·<see cref="CyScroller.ReloadCellView"/> 때는 그 항목에만 불린다 (스크롤 중에는 불리지 않는다).
         /// </summary>
         long GetItemId(CyScroller scroller, int dataIndex);
     }

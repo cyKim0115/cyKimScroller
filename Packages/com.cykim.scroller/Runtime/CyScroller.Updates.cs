@@ -5,7 +5,7 @@ using UnityEngine;
 
 namespace CyKim.Scroller
 {
-    // 증분 구조 변경: 삽입·삭제·이동을 연산 목록에 적어 두었다가 배치 끝에 한 번에 레이아웃·항목 ID·활성 셀·위치에 반영한다.
+    // 증분 변경: 삽입·삭제·이동(구조)과 내용 갱신·다시 받기(부분 갱신)를 연산 목록에 적어 두었다가 배치 끝에 한 번에 레이아웃·항목 ID·활성 셀·위치에 반영한다.
     public partial class CyScroller
     {
         private static readonly ProfilerMarker _applyUpdatesMarker = new ProfilerMarker("CyScroller.ApplyUpdates");
@@ -15,14 +15,24 @@ namespace CyKim.Scroller
             Insert,
             Remove,
             Move,
+
+            /// <summary>내용만 바뀜 (<see cref="RefreshCells"/>). 레이아웃·바인딩은 그대로다.</summary>
+            Refresh,
+
+            /// <summary>항목을 다시 받음 (<see cref="ReloadCellView"/>). 자리는 그대로이고 크기(와 ID)를 다시 묻고 활성 셀은 다시 바인딩한다.</summary>
+            Reload,
         }
 
-        /// <summary>기록한 연산. Insert·Remove는 (위치, 개수), Move는 (원래 인덱스, 옮길 인덱스). 인덱스는 앞 연산까지 반영한 기준이다.</summary>
+        /// <summary>
+        /// 기록한 연산. Insert·Remove·Refresh는 (위치, 개수), Move는 (원래 인덱스, 옮길 인덱스), Reload는 (위치). 인덱스는 앞 연산까지 반영한 기준이다.
+        /// Mask는 Refresh가 알린 changeMask다.
+        /// </summary>
         private struct UpdateOp
         {
             public UpdateOpType Type;
             public int A;
             public int B;
+            public int Mask;
         }
 
         // BeginUpdates 깊이. 0보다 크면 범위 갱신·델리게이트 호출·리로드·재배치·정리를 바깥 EndUpdates까지 미룬다.
@@ -43,16 +53,27 @@ namespace CyKim.Scroller
         // 배치가 대상이 지워진 트윈을 멈췄다. 적용을 마친 뒤 ScrollerTweeningChanged를 알린다.
         private bool _tweenCanceledByUpdates;
 
-        // 활성 셀 맞추기 작업 목록 (용량을 재사용해 할당하지 않는다).
+        // 활성 셀 맞추기 작업 목록 (용량을 재사용해 할당하지 않는다). 마스크는 옛 활성 셀마다 배치에서 모은 changeMask다.
         private readonly List<CyScrollerCellView> _reconcileCells = new List<CyScrollerCellView>(32);
         private readonly List<int> _reconcileTargets = new List<int>(32);
         private readonly List<int> _reconcilePrevious = new List<int>(32);
+        private readonly List<int> _reconcileMasks = new List<int>(32);
+
+        // 증분 변경을 적용하는 동안(활성 셀이 아직 배치 전 인덱스일 수 있는 동안) 콜백이 부른 RefreshCells (콜백 안에서 끝난 갱신만 있는 배치 포함).
+        // 셀을 새 인덱스로 맞춘 뒤 남은 셀에 배치의 마스크와 OR로 합쳐 부른다 (용량을 재사용한다).
+        private bool _deferRefreshes;
+        private readonly List<UpdateOp> _deferredRefreshes = new List<UpdateOp>(4);
+
+        // 콜백 안에서 끝난 갱신만 있는 배치가 활성 셀마다 모은 changeMask. 사용자 코드를 부르기 전에 연산 목록을 비우려고 먼저 모아 두고,
+        // 그 안에서 같은 일이 다시 일어나도 겹치지 않게 뒤에 쌓았다가 끝나면 덜어 낸다 (용량을 재사용한다).
+        private readonly List<int> _callbackRefreshMasks = new List<int>(32);
 
         /// <summary>배치에 기록한 연산까지 반영한 개수. 인자를 자를 때 쓴다.</summary>
         private int PendingUpdateCount => _layout.DataCount + _updateCountDelta;
 
         /// <summary>
-        /// 증분 변경 배치를 시작한다. 바깥 <see cref="EndUpdates"/>까지 <see cref="InsertCells"/>·<see cref="RemoveCells"/>·<see cref="MoveCell"/>을 모았다가 한 번에 적용한다.
+        /// 증분 변경 배치를 시작한다. 바깥 <see cref="EndUpdates"/>까지 <see cref="InsertCells"/>·<see cref="RemoveCells"/>·<see cref="MoveCell"/>과
+        /// <see cref="RefreshCells"/>·<see cref="ReloadCellView"/>를 모았다가 한 번에 적용한다.
         /// 중첩할 수 있고 할당하지 않는다. 반드시 <see cref="EndUpdates"/>와 짝을 맞춘다 (사이 코드가 예외를 던질 수 있으면 <c>finally</c>에서 부른다).
         /// </summary>
         /// <remarks>
@@ -104,7 +125,11 @@ namespace CyKim.Scroller
         /// 트윈·정렬 대상이 지워지면 트윈을 멈추고(완료 콜백·스냅 이벤트 없음) 정렬을 푼다.</para>
         /// <para>연산을 반영한 개수가 <see cref="ICyScrollerDelegate.GetNumberOfCells"/>와 다르면(연산이 없는 배치 포함) 경고하고 <see cref="ReloadData(ReloadAnchor, float)"/>(FirstVisible)로 다시 읽는다.
         /// 루프 모드도 증분 대신 같은 리로드로 바꾸고, 델리게이트·셀 이벤트 콜백 안에서 끝난 배치는 같은 리로드를 범위 갱신이 끝난 뒤로 미룬다.
+        /// 갱신(<see cref="RefreshCells"/>)만 있는 배치는 레이아웃을 바꾸지 않으므로 어느 쪽이든 리로드하지 않는다
+        /// (루프 모드는 사본 셀마다 부르고, 콜백 안에서 끝났으면 개수를 맞춰 보지 않고 배치 밖 호출처럼 바로 부른다).
         /// 배치 중 다시 읽는 요청(리로드·<see cref="ReloadDataKeepingPosition"/>·축 전환·델리게이트 교체)이 있었으면 기록한 연산 대신 그 요청을 처리한다 (위치 기준은 배치 전 화면).</para>
+        /// <para><see cref="ReloadCellView"/>한 항목은 크기(와 ID)를 다시 묻고 활성 셀을 다시 바인딩한다. <see cref="RefreshCells"/>로 알린 항목은 남은 셀마다 모은 changeMask로
+        /// <see cref="CyScrollerCellView.RefreshCellView(int)"/>를 한 번 부른다(인덱스 변경 알림·재배치 뒤, 새 자리 바인딩·표시 시작 전). 새로 바인딩하는 셀에는 부르지 않는다.</para>
         /// </remarks>
         public void EndUpdates()
         {
@@ -260,8 +285,112 @@ namespace CyKim.Scroller
         }
 
         /// <summary>
-        /// 바깥 EndUpdates. 기록한 연산을 증분으로 적용하거나(개수가 맞고 루프가 아닐 때), 앵커 보존 리로드로 바꾸거나, 다시 읽을 요청에 맡긴다.
+        /// dataIndex부터 항목 count개의 내용이 바뀌었다고 알린다 (크기·개수·셀 종류는 그대로). 그 항목의 활성 셀에만 <see cref="CyScrollerCellView.RefreshCellView(int)"/>를 부른다.
+        /// 델리게이트 데이터를 먼저 바꾼 뒤 부른다. 다시 바인딩하지 않고(<see cref="CyScrollerCellView.BindVersion"/> 그대로) 크기도 다시 묻지 않는다.
+        /// </summary>
+        /// <param name="dataIndex">시작 위치 (배치 안이면 앞 연산까지 반영한 기준).</param>
+        /// <param name="count">
+        /// 개수. 구간 [dataIndex, dataIndex + count)는 [0, 개수) 안쪽만 쓴다. 0 이하이거나 남는 구간이 없으면 아무것도 하지 않는다.
+        /// </param>
+        /// <param name="changeMask">무엇이 바뀌었는지 알리는 사용자 정의 비트 플래그 (기본 ~0 = 모두). 셀 뷰에 그대로 전달하고, 0이면 아무것도 하지 않는다.</param>
+        /// <remarks>
+        /// <para>배치 밖에서는 바로 부른다. 레이아웃을 바꾸지 않으므로 루프 모드에서도 리로드하지 않고 같은 데이터의 사본 셀마다 부르며, 델리게이트·셀 이벤트 콜백 안에서도 바로 부른다
+        /// (증분 변경을 적용하는 중이면 활성 셀을 새 인덱스로 맞춘 뒤 부른다). 리로드·재배치가 기다리고 있으면 그쪽이 셀을 모두 다시 바인딩하므로 부르지 않는다.
+        /// 활성 범위 밖 항목은 나중에 활성화될 때 최신 데이터로 바인딩되므로 부르지 않는다.</para>
+        /// <para>배치(<see cref="BeginUpdates"/>) 안에서는 항목마다 changeMask를 OR로 모았다가 <see cref="EndUpdates"/>에서 남은 셀마다 한 번 부른다.
+        /// 뒤따른 삽입·삭제·이동이 인덱스를 옮기면 모은 값도 같은 항목을 따라간다(순차 의미론). 지워진 항목과 배치 끝에 새로 바인딩되는 셀
+        /// (새로 활성 범위에 들어온 항목, 삽입한 항목, <see cref="ReloadCellView"/>한 항목)은 이미 최신 데이터로 바인딩되므로 부르지 않는다.
+        /// 배치가 리로드로 바뀌면(개수 불일치, 루프 모드나 콜백 안에서 끝난 배치의 삽입·삭제·이동·다시 받기) 셀을 모두 다시 바인딩하므로 부르지 않는다.
+        /// 갱신만 있는 배치는 리로드로 바뀌지 않는다. 콜백 안에서 끝났으면 배치 밖 호출처럼 바로(증분 변경을 적용하는 중이면 활성 셀을 새 인덱스로 맞춘 뒤)
+        /// 셀마다 모은 changeMask로 한 번 부른다.</para>
+        /// <para>크기나 셀 종류(프리팹)가 바뀌면 <see cref="ReloadCellView"/>를 쓴다.</para>
+        /// </remarks>
+        public void RefreshCells(int dataIndex, int count, int changeMask = ~0)
+        {
+            if (count <= 0 || changeMask == 0)
+            {
+                return;
+            }
+
+            int start = Mathf.Max(0, dataIndex);
+            if (_updateDepth > 0)
+            {
+                // 배치 안: 적어 두었다가 EndUpdates에서 같은 항목의 남은 셀에 모아 부른다.
+                int pendingEnd = (int)Math.Min((long)dataIndex + count, PendingUpdateCount);
+                if (pendingEnd > start)
+                {
+                    _updateOps.Add(new UpdateOp { Type = UpdateOpType.Refresh, A = start, B = pendingEnd - start, Mask = changeMask });
+                }
+
+                return;
+            }
+
+            if (_deferRefreshes)
+            {
+                // 증분 변경을 적용하는 중(콜백 안)이라 활성 셀이 아직 배치 전 인덱스일 수 있다. 셀을 새 인덱스로 맞춘 뒤 남은 셀에 부른다.
+                int deferredEnd = (int)Math.Min((long)dataIndex + count, int.MaxValue);
+                if (deferredEnd > start)
+                {
+                    _deferredRefreshes.Add(new UpdateOp { Type = UpdateOpType.Refresh, A = start, B = deferredEnd - start, Mask = changeMask });
+                }
+
+                return;
+            }
+
+            int end = (int)Math.Min((long)dataIndex + count, _layout.DataCount);
+            if (end <= start || !_hasLoaded || _reloadPending || _relayoutPending)
+            {
+                return;
+            }
+
+            RefreshCellsNow(start, end, changeMask);
+        }
+
+        /// <summary>
+        /// 활성 셀마다 <see cref="CyScrollerCellView.RefreshCellView(int)"/>를 changeMask로 부른다. 모든 항목에 <see cref="RefreshCells"/>를 부른 것과 같다
+        /// (크기는 다시 계산하지 않고, 루프 모드면 사본 셀마다, 배치 안이면 <see cref="EndUpdates"/>에서 남은 셀마다 한 번, changeMask가 0이면 아무것도 하지 않는다).
+        /// </summary>
+        /// <param name="changeMask">무엇이 바뀌었는지 알리는 사용자 정의 비트 플래그.</param>
+        public void RefreshActiveCellViews(int changeMask)
+        {
+            RefreshCells(0, int.MaxValue, changeMask);
+        }
+
+        /// <summary>
+        /// dataIndex 항목을 다시 받는다. 크기(와 항목 ID)를 다시 묻고, 활성 셀이 있으면 회수한 뒤 델리게이트 <see cref="ICyScrollerDelegate.GetCellView"/>로 다시 받아 바인딩한다.
+        /// 셀 종류(<see cref="CyScrollerCellView.CellIdentifier"/>)가 바뀌어도 된다. 델리게이트 데이터를 먼저 바꾼 뒤 부른다.
+        /// </summary>
+        /// <param name="dataIndex">다시 받을 항목 (배치 안이면 앞 연산까지 반영한 기준). [0, 개수) 밖이면 아무것도 하지 않는다.</param>
+        /// <remarks>
+        /// <para>새 바인딩이므로 <see cref="CyScrollerCellView.BindVersion"/>이 늘고, 보이던 셀이면 <see cref="CellViewDidEndDisplay"/> → 회수 → 새 셀 바인딩 →
+        /// <see cref="CellViewWillDisplay"/> 순서로 표시 이벤트 짝을 지킨다. 활성 셀이 없으면 크기(와 ID)만 갱신한다(<see cref="ICyScrollerDelegate.GetCellView"/>는 부르지 않는다).
+        /// 크기가 바뀌면 <see cref="InsertCells"/>와 같은 규칙으로 뷰포트 맨 앞 항목보다 앞의 크기 변화만큼 스크롤 위치를 옮겨 화면을 지키고(맨 앞 항목 자신이면 같은 거리를 지킨다),
+        /// 진행 중인 트윈·점프 정렬·보관한 앵커는 같은 항목을 계속 향한다.</para>
+        /// <para>호출 시점 규칙은 <see cref="InsertCells"/>와 같다. 배치 안에서는 <see cref="EndUpdates"/>까지 미루고 뒤따른 연산의 인덱스 이동을 따라가며, 같은 배치에서 지워지면 아무것도 하지 않는다.
+        /// 루프 모드와 델리게이트·셀 이벤트 콜백 안에서는 다른 증분 변경처럼 앵커 보존 리로드로 바뀐다.</para>
+        /// </remarks>
+        public void ReloadCellView(int dataIndex)
+        {
+            if (dataIndex < 0 || dataIndex >= PendingUpdateCount)
+            {
+                return;
+            }
+
+            BeginUpdates();
+            try
+            {
+                _updateOps.Add(new UpdateOp { Type = UpdateOpType.Reload, A = dataIndex });
+            }
+            finally
+            {
+                EndUpdates();
+            }
+        }
+
+        /// <summary>
+        /// 바깥 EndUpdates. 기록한 연산을 증분으로 적용하거나(개수가 맞고 루프가 아닐 때, 갱신만 있으면 루프여도), 앵커 보존 리로드로 바꾸거나, 다시 읽을 요청에 맡긴다.
         /// 그다음 배치 중 미룬 리로드·재배치·정리·범위 갱신을 처리한다.
+        /// 콜백 안(범위 갱신 중)에서 끝난 배치는 삽입·삭제·이동·다시 받기가 있으면 리로드를 미루고, 갱신만 있으면 배치 밖 갱신처럼 바로 처리한다(<see cref="ApplyRefreshesInCallback"/>).
         /// </summary>
         private void FinishUpdates()
         {
@@ -271,15 +400,30 @@ namespace CyKim.Scroller
 
             if (ops.Count > 0 && _inRangeUpdate)
             {
-                // 범위 갱신 콜백 안에서 끝난 배치. 델리게이트는 이미 최종 상태이므로 범위 갱신 뒤 앵커 보존 리로드로 같은 결과를 낸다.
-                ops.Clear();
-                ScheduleStructuralReload();
+                if (ChangesLayout(ops))
+                {
+                    // 범위 갱신 콜백 안에서 끝난 삽입·삭제·이동·다시 받기. 델리게이트는 이미 최종 상태이므로 범위 갱신 뒤 앵커 보존 리로드로 같은 결과를 낸다.
+                    ops.Clear();
+                    ScheduleStructuralReload();
+                }
+                else
+                {
+                    // 갱신만 있으면 레이아웃·인덱스가 그대로이므로 배치 밖 RefreshCells처럼 처리한다 (리로드하지 않는다).
+                    ApplyRefreshesInCallback(ops);
+                }
+
                 return;
             }
 
-            // 적용하는 동안 콜백이 부른 연산은 예비 목록에 들어가게 바꿔 끼운다.
-            _updateOps = _spareUpdateOps;
-            _spareUpdateOps = ops;
+            // 적용하는 동안 콜백이 부른 연산은 예비 목록에 들어가게 바꿔 끼운다. 콜백 안에서 끝난 빈 배치는 적용할 것이 없으므로 바꾸지 않는다
+            // (바깥에서 적용 중인 목록이 다시 기록 목록이 되면 그 뒤 콜백이 기록한 연산이 적용 중인 목록에 섞인다).
+            bool swapLists = !_inRangeUpdate;
+            if (swapLists)
+            {
+                _updateOps = _spareUpdateOps;
+                _spareUpdateOps = ops;
+            }
+
             try
             {
                 // 로드 전이면 첫 리로드가, 다시 읽을 요청(리로드·델리게이트 교체·축 전환·위치 유지 리로드)이 있으면 그 요청이 최종 데이터를 읽는다.
@@ -298,6 +442,11 @@ namespace CyKim.Scroller
                     else if (ops.Count == 0)
                     {
                         // 바뀐 것이 없다.
+                    }
+                    else if (!ChangesLayout(ops))
+                    {
+                        // 내용 갱신만 있다. 레이아웃·인덱스가 그대로이므로 루프 모드에서도 활성 셀(사본 포함)에 바로 부른다.
+                        ApplyRefreshes(ops);
                     }
                     else if (_loop || _layout.IsLoop)
                     {
@@ -321,7 +470,8 @@ namespace CyKim.Scroller
             }
 
             // 알림 핸들러가 새 배치를 열었으면 그 배치가 끝날 때 처리한다.
-            if (_updateDepth == 0 && (_rangeUpdateDeferred || HasPendingWork))
+            // 콜백 안(범위 갱신 중)에서 끝난 배치는 범위를 맞출 수 없으므로 미룬 범위 갱신을 지우지 않고 바깥 갱신에 남긴다 (지우면 바깥 배치가 미룬 것까지 잃는다).
+            if (_updateDepth == 0 && !_inRangeUpdate && (_rangeUpdateDeferred || HasPendingWork))
             {
                 _rangeUpdateDeferred = false;
                 UpdateActiveRange();
@@ -331,6 +481,7 @@ namespace CyKim.Scroller
         /// <summary>
         /// 연산을 레이아웃·항목 ID·위치·활성 셀에 증분으로 반영한다. 범위 갱신 중(_inRangeUpdate)으로 돌리므로 그 사이 사용자 코드가 부른
         /// 리로드·재배치·정리·연산은 끝난 뒤로 미뤄지고 범위 갱신은 호출자가 마지막에 한다. 사용자 코드 예외로 멈추면 앵커 보존 리로드를 미뤄 다음 갱신에 맞춘다.
+        /// 활성 셀을 새 인덱스로 맞추기 전에 사용자 코드가 부른 <see cref="RefreshCells"/>는 맞춘 뒤 남은 셀에 부른다 (<see cref="ReconcileActiveCells"/>).
         /// </summary>
         private void ApplyIncrementalUpdates(List<UpdateOp> ops)
         {
@@ -338,6 +489,7 @@ namespace CyKim.Scroller
             {
                 bool completed = false;
                 _inRangeUpdate = true;
+                _deferRefreshes = true;
                 try
                 {
                     ApplyIncrementalUpdatesCore(ops);
@@ -346,6 +498,9 @@ namespace CyKim.Scroller
                 finally
                 {
                     _inRangeUpdate = false;
+                    _deferRefreshes = false;
+                    _deferredRefreshes.Clear();
+                    _reconcileCells.Clear();
                     if (!completed)
                     {
                         ScheduleStructuralReload();
@@ -356,6 +511,169 @@ namespace CyKim.Scroller
                 _rangeUpdateDeferred = true;
                 ApplyScrollbarVisibility();
             }
+        }
+
+        /// <summary>
+        /// 갱신(<see cref="RefreshCells"/>)만 있는 배치. 레이아웃·인덱스가 그대로이므로 활성 셀(루프 사본 포함)마다 그 항목에 모은 changeMask로
+        /// <see cref="CyScrollerCellView.RefreshCellView(int)"/>를 한 번 부른다. 사용자 코드는 범위 갱신 중으로 돌려 활성 목록이 바뀌지 않게 하고(그 사이 요청은 미룬다),
+        /// 콘텐츠가 옮겨졌으면 호출자(<see cref="FinishUpdates"/>)가 범위를 맞춘다. 재배치가 기다리면 그쪽이 셀을 모두 다시 바인딩하고,
+        /// 배치 중 미룬 <see cref="ClearActive"/>가 있으면 셀을 파괴하므로 부르지 않는다.
+        /// </summary>
+        private void ApplyRefreshes(List<UpdateOp> ops)
+        {
+            if (_relayoutPending || _clearActivePending)
+            {
+                return;
+            }
+
+            float position = ScrollPosition;
+            _inRangeUpdate = true;
+            try
+            {
+                for (int i = 0; i < _activeCells.Count; i++)
+                {
+                    CyScrollerCellView cell = _activeCells[i];
+                    if (cell == null)
+                    {
+                        continue;
+                    }
+
+                    int mask = GetRefreshMask(ops, cell.DataIndex);
+                    if (mask != 0)
+                    {
+                        cell.RefreshCellView(mask);
+                    }
+                }
+            }
+            finally
+            {
+                _inRangeUpdate = false;
+            }
+
+            if (HasMovedFrom(position) || _recenterDeferred || _snapEventPending)
+            {
+                _rangeUpdateDeferred = true;
+            }
+        }
+
+        /// <summary>
+        /// 델리게이트·셀 이벤트 콜백 안(범위 갱신 중)에서 끝난 갱신만 있는 배치. 배치 밖 <see cref="RefreshCells"/>와 같은 경로로 처리하고 리로드하지 않는다.
+        /// 증분 변경을 적용하는 중이라 활성 셀이 아직 배치 전 인덱스일 수 있으면 셀을 새 인덱스로 맞춘 뒤 부르도록 미루고,
+        /// 아니면 활성 셀(루프 사본 포함)마다 그 항목에 모은 changeMask로 한 번 부른다. 리로드·재배치가 기다리면 그쪽이 셀을 다시 바인딩하므로 부르지 않는다.
+        /// 끝나면 연산 목록은 비어 있다. 범위는 바깥 범위 갱신이 맞춘다. 할당 없음 (작업 목록 용량을 재사용한다).
+        /// </summary>
+        /// <remarks>
+        /// 연산 목록은 바꿔 끼우지 않는다 (예비 목록이 바깥에서 적용 중인 목록일 수 있다). 대신 셀별 마스크를 먼저 모으고 목록을 비운 뒤 사용자 코드를 부르므로,
+        /// <see cref="CyScrollerCellView.RefreshCellView(int)"/> 안에서 연 배치도 이 목록을 다시 쓸 수 있다.
+        /// </remarks>
+        private void ApplyRefreshesInCallback(List<UpdateOp> ops)
+        {
+            if (_deferRefreshes)
+            {
+                for (int i = 0; i < ops.Count; i++)
+                {
+                    _deferredRefreshes.Add(ops[i]);
+                }
+
+                ops.Clear();
+                return;
+            }
+
+            if (!_hasLoaded || _reloadPending || _relayoutPending)
+            {
+                ops.Clear();
+                return;
+            }
+
+            List<int> masks = _callbackRefreshMasks;
+            int start = masks.Count;
+            int count = _activeCells.Count;
+            for (int i = 0; i < count; i++)
+            {
+                CyScrollerCellView cell = _activeCells[i];
+                masks.Add(cell != null ? GetRefreshMask(ops, cell.DataIndex) : 0);
+            }
+
+            ops.Clear();
+            try
+            {
+                // 범위 갱신 중이라 활성 목록은 그대로다. 그래도 목록이 줄었으면 남은 자리까지만 부른다.
+                for (int i = 0; i < count && i < _activeCells.Count; i++)
+                {
+                    int mask = masks[start + i];
+                    CyScrollerCellView cell = _activeCells[i];
+                    if (mask != 0 && cell != null)
+                    {
+                        cell.RefreshCellView(mask);
+                    }
+                }
+            }
+            finally
+            {
+                masks.RemoveRange(start, count);
+            }
+        }
+
+        /// <summary>
+        /// 배치 밖 갱신. [start, end) 항목의 활성 셀(루프 사본 포함)마다 <see cref="CyScrollerCellView.RefreshCellView(int)"/>를 부른다.
+        /// 사용자 코드는 범위 갱신 중으로 돌려 활성 목록이 바뀌지 않게 하고(그 사이 리로드·정리·범위 갱신은 미룬다), 끝난 뒤 콘텐츠가 옮겨졌거나 미룬 작업이 있으면 범위를 맞춘다.
+        /// 콜백 안(이미 범위 갱신 중)이면 바깥 범위 갱신이 맞춘다.
+        /// </summary>
+        private void RefreshCellsNow(int start, int end, int changeMask)
+        {
+            bool nested = _inRangeUpdate;
+            float position = ScrollPosition;
+            _inRangeUpdate = true;
+            try
+            {
+                for (int i = 0; i < _activeCells.Count; i++)
+                {
+                    CyScrollerCellView cell = _activeCells[i];
+                    if (cell != null && cell.DataIndex >= start && cell.DataIndex < end)
+                    {
+                        cell.RefreshCellView(changeMask);
+                    }
+                }
+            }
+            finally
+            {
+                _inRangeUpdate = nested;
+            }
+
+            if (!nested && (HasMovedFrom(position) || HasPendingWork || _recenterDeferred || _snapEventPending))
+            {
+                UpdateActiveRange();
+            }
+        }
+
+        /// <summary>갱신 연산 중 index 항목을 덮는 것들의 changeMask를 OR로 모은다. 인덱스가 그대로인 연산 목록에 쓴다. O(연산 수), 할당 없음.</summary>
+        private static int GetRefreshMask(List<UpdateOp> ops, int index)
+        {
+            int mask = 0;
+            for (int i = 0; i < ops.Count; i++)
+            {
+                UpdateOp op = ops[i];
+                if (op.Type == UpdateOpType.Refresh && index >= op.A && index - op.A < op.B)
+                {
+                    mask |= op.Mask;
+                }
+            }
+
+            return mask;
+        }
+
+        /// <summary>레이아웃이나 바인딩을 바꾸는 연산(삽입·삭제·이동·다시 받기)이 있는지. 갱신만 있으면 false.</summary>
+        private static bool ChangesLayout(List<UpdateOp> ops)
+        {
+            for (int i = 0; i < ops.Count; i++)
+            {
+                if (ops[i].Type != UpdateOpType.Refresh)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private void ApplyIncrementalUpdatesCore(List<UpdateOp> ops)
@@ -438,21 +756,34 @@ namespace CyKim.Scroller
         }
 
         /// <summary>
-        /// 크기·항목 ID 배열을 연산 순서대로 옮기고(Array.Copy), 삽입한 자리만 델리게이트에 크기·ID를 최종 인덱스로 묻는다.
-        /// ID → 인덱스 사전은 바뀐 가장 앞 자리부터 다시 맞춘다. 접두합은 다음 Build가 그 자리부터 다시 더한다.
+        /// 크기·항목 ID 배열을 연산 순서대로 옮기고(Array.Copy), 삽입한 자리와 다시 받을 항목(Reload)만 델리게이트에 크기·ID를 최종 인덱스로 묻는다.
+        /// ID → 인덱스 사전은 구조 연산이 바꾼 가장 앞 자리(다시 받은 항목의 ID가 바뀌었으면 그 자리)부터 다시 맞춘다. 접두합은 다음 Build가 바뀐 자리부터 다시 더한다.
         /// </summary>
         private void ApplyUpdatesToLayout(List<UpdateOp> ops, int oldCount)
         {
+            // 구조 연산(삽입·삭제·이동)이 바꾼 가장 앞 자리. 그 앞 항목은 자리와 ID가 그대로다(삽입한 항목도 모두 이 뒤에 있다).
+            // 다시 받을 항목은 자리를 바꾸지 않으므로 크기를 찾기 시작할 자리에만 넣는다 (연산을 거쳐도 이 자리 앞으로는 가지 않는다).
             int firstChanged = oldCount;
+            int firstQueried = oldCount;
             for (int i = 0; i < ops.Count; i++)
             {
                 UpdateOp op = ops[i];
-                int changed = op.Type == UpdateOpType.Move ? Mathf.Min(op.A, op.B) : op.A;
-                if (changed < firstChanged)
+                switch (op.Type)
                 {
-                    firstChanged = changed;
+                    case UpdateOpType.Insert:
+                    case UpdateOpType.Remove:
+                        firstChanged = Mathf.Min(firstChanged, op.A);
+                        break;
+                    case UpdateOpType.Move:
+                        firstChanged = Mathf.Min(firstChanged, Mathf.Min(op.A, op.B));
+                        break;
+                    case UpdateOpType.Reload:
+                        firstQueried = Mathf.Min(firstQueried, op.A);
+                        break;
                 }
             }
+
+            firstQueried = Mathf.Min(firstQueried, firstChanged);
 
             bool hasIds = _hasItemIds;
             if (hasIds)
@@ -482,7 +813,7 @@ namespace CyKim.Scroller
 
                         _layout.RemoveSizes(op.A, op.B);
                         break;
-                    default:
+                    case UpdateOpType.Move:
                         if (hasIds)
                         {
                             MoveItemIdSlot(op.A, op.B);
@@ -490,13 +821,17 @@ namespace CyKim.Scroller
 
                         _layout.MoveSize(op.A, op.B);
                         break;
+                    case UpdateOpType.Reload:
+                        // 자리는 그대로 두고 크기만 받지 않은 상태로 만든다. ID 자리에는 옛 ID가 남아 뒤따른 연산과 같이 옮겨진다.
+                        _layout.InvalidateSize(op.A);
+                        break;
                 }
             }
 
-            // 아직 크기를 받지 않은 자리가 이번 배치에 삽입한 항목이다 (연산을 거치며 같이 옮겨졌다).
+            // 아직 크기를 받지 않은 자리가 이번 배치에 삽입했거나 다시 받을 항목이다 (연산을 거치며 같이 옮겨졌다).
             int newCount = _layout.DataCount;
             bool fetchedIds = false;
-            for (int i = firstChanged; i < newCount; i++)
+            for (int i = firstQueried; i < newCount; i++)
             {
                 if (!_layout.IsSizeUnset(i))
                 {
@@ -504,11 +839,28 @@ namespace CyKim.Scroller
                 }
 
                 _layout.SetSize(i, _delegate != null ? _delegate.GetCellViewSize(this, i) : 0f);
-                if (hasIds)
+                if (!hasIds)
                 {
-                    _itemIds[i] = _idProvider.GetItemId(this, i);
-                    fetchedIds = true;
+                    continue;
                 }
+
+                long id = _idProvider.GetItemId(this, i);
+                if (i < firstChanged)
+                {
+                    // 구조 연산 앞에서 다시 받은 항목이다. ID가 그대로면 사전도 그대로다.
+                    if (id == _itemIds[i])
+                    {
+                        continue;
+                    }
+
+                    // ID가 바뀌었으면 사전을 이 자리부터 다시 맞춘다 (같은 ID가 여럿이면 앞 인덱스가 이기는 규칙을 지킨다).
+                    // 아직 덮어쓰지 않았으므로 이 자리부터는 옛 ID다.
+                    RemoveItemIdEntries(i, firstChanged);
+                    firstChanged = i;
+                }
+
+                _itemIds[i] = id;
+                fetchedIds = true;
             }
 
             if (hasIds)
@@ -582,30 +934,36 @@ namespace CyKim.Scroller
         }
 
         /// <summary>
-        /// 연산을 반영한 배치·위치에 활성 셀을 맞춘다. 표시 끝 → 회수 → 인덱스 변경 알림·재배치 → 새 자리 바인딩 → 표시 시작 순서이고,
-        /// 남은 셀은 다시 바인딩하지 않는다. 계속 보이는 셀에는 표시 이벤트가 없다. 활성 목록·범위는 사용자 코드를 부르기 전에 맞춘다.
+        /// 연산을 반영한 배치·위치에 활성 셀을 맞춘다. 표시 끝 → 회수 → 인덱스 변경 알림·재배치 → 내용 갱신 → 새 자리 바인딩 → 표시 시작 순서이고,
+        /// 남은 셀은 다시 바인딩하지 않는다(다시 받을 항목의 셀은 회수하고 새로 바인딩한다). 계속 보이는 셀에는 표시 이벤트가 없다.
+        /// 활성 목록·범위는 인덱스 변경 알림 전에 맞춘다.
         /// </summary>
         private void ReconcileActiveCells(List<UpdateOp> ops)
         {
             ComputeActiveRange(ScrollPosition, out int first, out int last, out int visibleFirst, out int visibleLast);
 
-            // 옛 활성 셀(목록 i = 옛 슬롯 _activeFirst + i)마다 새 슬롯. 지워졌거나 새 활성 범위 밖이면 -1.
+            // 옛 활성 셀(목록 i = 옛 슬롯 _activeFirst + i)마다 새 슬롯과 배치에서 모은 changeMask.
+            // 지워졌거나 다시 받을 항목이거나 새 활성 범위 밖이면 슬롯은 -1.
             int oldFirst = _activeFirst;
             List<int> targets = _reconcileTargets;
+            List<int> masks = _reconcileMasks;
             targets.Clear();
+            masks.Clear();
             for (int i = 0; i < _activeCells.Count; i++)
             {
                 int target = -1;
+                int mask = 0;
                 if (_activeCells[i] != null)
                 {
-                    target = MapThroughUpdates(ops, oldFirst + i, out bool removed);
-                    if (removed || target < first || target > last)
+                    target = MapActiveCellThroughUpdates(ops, oldFirst + i, out mask);
+                    if (target < first || target > last)
                     {
                         target = -1;
                     }
                 }
 
                 targets.Add(target);
+                masks.Add(mask);
             }
 
             // 1. 표시 끝: 빠지는 셀과 남지만 새 표시 범위 밖으로 가는 셀. 셀은 목록에 둔 채 알린다.
@@ -665,12 +1023,14 @@ namespace CyKim.Scroller
                 AssignItemId(cell, target);
             }
 
-            previousCells.Clear();
             _activeFirst = hasRange ? first : 0;
             _activeLast = hasRange ? last : -1;
             _visibleFirst = visibleFirst <= visibleLast ? visibleFirst : 0;
             _visibleLast = visibleFirst <= visibleLast ? visibleLast : -1;
             _cellPositionsDirty = true;
+
+            // 남은 셀이 새 인덱스를 가졌다. 이 뒤에 사용자 코드가 부른 RefreshCells는 바로 적용한다.
+            _deferRefreshes = false;
 
             // 4. 남은 셀: 인덱스가 바뀌었으면 알린 뒤 새 위치로 옮긴다 (다시 바인딩하지 않으므로 BindVersion은 그대로).
             for (int i = 0; i < length; i++)
@@ -699,7 +1059,30 @@ namespace CyKim.Scroller
                 }
             }
 
-            // 5. 새로 활성 범위에 들어온 자리만 델리게이트로 받는다.
+            // 5. 내용 갱신: 남은 셀마다 배치에서 모은 changeMask와 적용 중(셀을 맞추기 전) 콜백이 부른 RefreshCells를 OR로 합쳐 한 번 부른다.
+            //    새로 바인딩할 셀(새 자리·삽입·다시 받을 항목)은 최신 데이터로 바인딩하므로 부르지 않는다. 리로드·재배치가 기다리면 그쪽이 셀을 다시 바인딩한다.
+            if (!_reloadPending && !_relayoutPending)
+            {
+                for (int i = 0; i < previousCells.Count; i++)
+                {
+                    CyScrollerCellView cell = previousCells[i];
+                    if (cell == null || targets[i] < 0)
+                    {
+                        continue;
+                    }
+
+                    int mask = masks[i] | GetRefreshMask(_deferredRefreshes, cell.DataIndex);
+                    if (mask != 0)
+                    {
+                        cell.RefreshCellView(mask);
+                    }
+                }
+            }
+
+            previousCells.Clear();
+            _deferredRefreshes.Clear();
+
+            // 6. 새로 활성 범위에 들어온 자리만 델리게이트로 받는다.
             for (int i = 0; i < length; i++)
             {
                 if (_activeCells[i] != null)
@@ -712,7 +1095,7 @@ namespace CyKim.Scroller
                 NotifyShown(added);
             }
 
-            // 6. 표시 시작: 새 표시 범위에서 아직 보이지 않던 셀.
+            // 7. 표시 시작: 새 표시 범위에서 아직 보이지 않던 셀.
             for (int slot = _visibleFirst; slot <= _visibleLast; slot++)
             {
                 BeginDisplay(GetActiveCellAt(slot));
@@ -769,7 +1152,7 @@ namespace CyKim.Scroller
                         }
 
                         break;
-                    default:
+                    case UpdateOpType.Move:
                         // 원래 자리에서 뺀다. 앵커 항목이면 그 자리를 비운다.
                         if (index > op.A)
                         {
@@ -786,6 +1169,9 @@ namespace CyKim.Scroller
                             index++;
                         }
 
+                        break;
+                    default:
+                        // 갱신·다시 받기는 항목을 옮기지 않는다 (다시 받은 크기는 레이아웃이 반영한다).
                         break;
                 }
             }
@@ -824,21 +1210,66 @@ namespace CyKim.Scroller
                         }
 
                         break;
+                    case UpdateOpType.Move:
+                        index = MoveIndex(index, op.A, op.B);
+                        break;
                     default:
+                        // 갱신·다시 받기는 항목을 옮기지 않는다.
+                        break;
+                }
+            }
+
+            return index;
+        }
+
+        /// <summary>
+        /// 배치 전 활성 셀의 인덱스가 연산을 모두 거친 뒤의 인덱스 (옮겨진 항목은 따라간다, <see cref="MapThroughUpdates"/>와 같다).
+        /// 그 항목이 지워졌거나 다시 받을 항목(<see cref="ReloadCellView"/>)이면 셀을 회수하므로 -1이다.
+        /// 지나온 갱신(<see cref="RefreshCells"/>)이 그 항목을 덮으면 changeMask를 OR로 모아 refreshMask에 준다. O(연산 수), 할당 없음.
+        /// </summary>
+        private static int MapActiveCellThroughUpdates(List<UpdateOp> ops, int index, out int refreshMask)
+        {
+            refreshMask = 0;
+            for (int i = 0; i < ops.Count; i++)
+            {
+                UpdateOp op = ops[i];
+                switch (op.Type)
+                {
+                    case UpdateOpType.Insert:
+                        if (index >= op.A)
+                        {
+                            index += op.B;
+                        }
+
+                        break;
+                    case UpdateOpType.Remove:
+                        if (index >= op.A + op.B)
+                        {
+                            index -= op.B;
+                        }
+                        else if (index >= op.A)
+                        {
+                            refreshMask = 0;
+                            return -1;
+                        }
+
+                        break;
+                    case UpdateOpType.Move:
+                        index = MoveIndex(index, op.A, op.B);
+                        break;
+                    case UpdateOpType.Refresh:
+                        if (index >= op.A && index - op.A < op.B)
+                        {
+                            refreshMask |= op.Mask;
+                        }
+
+                        break;
+                    default:
+                        // 다시 받을 항목은 새로 바인딩한다 (모은 갱신은 쓸 일이 없다).
                         if (index == op.A)
                         {
-                            index = op.B;
-                        }
-                        else if (op.A < op.B)
-                        {
-                            if (index > op.A && index <= op.B)
-                            {
-                                index--;
-                            }
-                        }
-                        else if (index >= op.B && index < op.A)
-                        {
-                            index++;
+                            refreshMask = 0;
+                            return -1;
                         }
 
                         break;
@@ -846,6 +1277,22 @@ namespace CyKim.Scroller
             }
 
             return index;
+        }
+
+        /// <summary>from 항목을 빼서 to 자리에 넣었을 때(<see cref="MoveCell"/>) index 항목의 새 인덱스.</summary>
+        private static int MoveIndex(int index, int from, int to)
+        {
+            if (index == from)
+            {
+                return to;
+            }
+
+            if (from < to)
+            {
+                return index > from && index <= to ? index - 1 : index;
+            }
+
+            return index >= to && index < from ? index + 1 : index;
         }
     }
 }

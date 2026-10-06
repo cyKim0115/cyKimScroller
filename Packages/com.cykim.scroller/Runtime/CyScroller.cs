@@ -665,7 +665,7 @@ namespace CyKim.Scroller
         /// </summary>
         /// <remarks>
         /// 데이터가 바뀌어도 보던 항목을 유지하려면 <see cref="ReloadDataKeepingPosition"/>이나 <see cref="ReloadData(ReloadAnchor, float)"/>를,
-        /// 바뀐 자리를 알면 <see cref="InsertCells"/>·<see cref="RemoveCells"/>·<see cref="MoveCell"/>을 쓴다.
+        /// 바뀐 자리를 알면 <see cref="InsertCells"/>·<see cref="RemoveCells"/>·<see cref="MoveCell"/>을, 내용만 바뀐 항목은 <see cref="RefreshCells"/>·<see cref="ReloadCellView"/>를 쓴다.
         /// </remarks>
         public void ReloadData()
         {
@@ -741,9 +741,13 @@ namespace CyKim.Scroller
         }
 
         /// <summary>
-        /// 활성 셀마다 <see cref="CyScrollerCellView.RefreshCellView"/>를 호출한다. 크기는 다시 계산하지 않는다.
+        /// 활성 셀마다 <see cref="CyScrollerCellView.RefreshCellView()"/>를 호출한다. 크기는 다시 계산하지 않는다.
         /// 기본 구현은 비어 있으므로, 셀 뷰가 이를 재정의해 자기 데이터로 다시 그려야 한다.
         /// </summary>
+        /// <remarks>
+        /// 증분 변경 배치 중에 불러도 바로(배치 전 상태의 셀에) 호출한다. 바뀐 항목만 알리거나 배치 끝에 맞춰 부르려면
+        /// <see cref="RefreshCells"/>·<see cref="RefreshActiveCellViews(int)"/>를 쓴다.
+        /// </remarks>
         public void RefreshActiveCellViews()
         {
             for (int i = 0; i < _activeCells.Count; i++)
