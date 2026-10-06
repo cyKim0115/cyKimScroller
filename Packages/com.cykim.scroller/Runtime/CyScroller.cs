@@ -59,6 +59,8 @@ namespace CyKim.Scroller
         [SerializeField] private ScrollbarVisibility _scrollbarVisibility = ScrollbarVisibility.OnlyIfNeeded;
         [Tooltip("관성 속도 상한. 0이면 제한 없음.")]
         [SerializeField, Min(0f)] private float _maxVelocity;
+        [Tooltip("콘텐츠 처음·끝까지 남은 거리가 이 값(px) 이하가 되면 ScrollerNearEdge를 한 번 알린다. 0이면 끈다.")]
+        [SerializeField, Min(0f)] private float _nearEdgeDistance;
 
         [Header("Snapping")]
         [SerializeField] private bool _snapping;
@@ -701,6 +703,9 @@ namespace CyKim.Scroller
 
             // 정착·고속 스크롤 판단. 트윈 중이면 이번 걸음의 이동 속도, 아니면 관성 속도를 쓴다.
             UpdateScrollState(ScrollSpeed);
+
+            // 이번 프레임의 이동·리로드·증분 변경이 모두 반영된 위치에서 끝 근접을 판단한다 (범위 갱신 콜백 밖이라 핸들러가 InsertCells를 불러도 된다).
+            UpdateNearEdges();
 
             // 이번 프레임의 드래그·관성·트윈이 모두 반영된 뒤 셀 위치를 한 번 알린다.
             NotifyCellPositionsIfChanged();

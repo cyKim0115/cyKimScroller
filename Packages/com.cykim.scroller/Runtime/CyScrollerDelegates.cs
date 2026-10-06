@@ -46,4 +46,7 @@ namespace CyKim.Scroller
 
     /// <summary>고속 스크롤 상태가 바뀔 때. <see cref="CyScroller.IsFastScrolling"/>.</summary>
     public delegate void ScrollerFastScrollingChangedHandler(CyScroller scroller, bool fastScrolling);
+
+    /// <summary>콘텐츠 가장자리까지 남은 거리가 <see cref="CyScroller.NearEdgeDistance"/> 이하가 됐을 때. 다음 페이지를 불러오는 데 쓴다.</summary>
+    public delegate void ScrollerNearEdgeHandler(CyScroller scroller, ScrollEdge edge);
 }

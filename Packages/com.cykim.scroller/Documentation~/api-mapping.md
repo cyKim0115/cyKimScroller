@@ -52,6 +52,7 @@
 | 스크롤 중 | `ScrollerScrolled`, `ScrollerScrollingChanged` | `scrollViewDidScroll(_:)` | `OnScrollListener` | 스크롤바 `valueChanged` |
 | 스크롤이 멈춤 (관성·애니메이션 포함) | `ScrollerSettled` / `IsSettled`, 셀 뷰 `OnScrollerSettled()` | `scrollViewDidEndDecelerating(_:)` / `scrollViewDidEndScrollingAnimation(_:)` (감속 없이 놓으면 `scrollViewDidEndDragging(_:willDecelerate:)`) | `onScrollStateChanged()`의 `SCROLL_STATE_IDLE` | — |
 | 빠르게 스크롤하는 중 | `IsFastScrolling` / `ScrollerFastScrollingChanged` (뷰포트 비율 임계값, 히스테리시스) | — (`scrollViewDidScroll(_:)`에서 속도를 계산) | — (`onScrolled()`의 이동량으로 계산) | — |
+| 끝 근처 도달 (다음 페이지 불러오기) | `NearEdgeDistance` + `ScrollerNearEdge(scroller, ScrollEdge)` (가장자리마다 한 번, 멀어지거나 개수가 바뀌면 다시 열림) | `UITableViewDataSourcePrefetching`의 `tableView(_:prefetchRowsAt:)`, 또는 `scrollViewDidScroll(_:)`에서 남은 거리 비교 | `OnScrollListener.onScrolled()`에서 `findLastVisibleItemPosition()`과 개수 비교 (Paging 라이브러리는 `prefetchDistance`) | — |
 | 스냅 | `Snapping` + `ScrollerSnapped` | `isPagingEnabled`, `scrollViewWillEndDragging(_:withVelocity:targetContentOffset:)` | `LinearSnapHelper` / `PagerSnapHelper` | — |
 | 무한 루프 | `Loop`, `LoopJumpDirection` | — | — | — |
 

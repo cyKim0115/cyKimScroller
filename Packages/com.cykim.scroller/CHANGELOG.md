@@ -16,6 +16,9 @@
 - 고속 스크롤 `IsFastScrolling`과 `ScrollerFastScrollingChanged`(`ScrollerFastScrollingChangedHandler`): 스크롤 속도(트윈이면 트윈 이동 속도, 아니면 관성 속도)가
   뷰포트 길이 × `FastScrollEnterThreshold`(기본 3)/s 이상이면 켜지고 × `FastScrollExitThreshold`(기본 1.5)/s 미만이면 꺼진다 (히스테리시스, 들어가는 값 0이면 끔)
 - 인스펙터 Runtime 영역에 Settled·Fast Scrolling 표시
+- 끝 근접 이벤트 `ScrollerNearEdge`(`ScrollerNearEdgeHandler`, `ScrollEdge` Start·End)와 `NearEdgeDistance`(px, 기본 0 = 끔): 콘텐츠 처음·끝까지 남은 거리가 그 값 이하가 되면
+  LateUpdate 끝에서 가장자리마다 한 번 알리고 잠근다. 남은 거리가 × 1.5를 넘게 멀어지거나 데이터 개수가 바뀌면 다시 연다.
+  콘텐츠가 뷰포트보다 짧으면 End만 알리고(개수가 바뀌지 않으면 다시 알리지 않음), 루프 모드에서는 알리지 않는다
 
 ### Changed
 - 크기 애니메이션의 중간 걸음은 레이아웃 접두합을 다시 더하지 않고 그 뒤 항목 위치에 변화량을 더해 계산한다. 10만 항목의 맨 앞 항목을 애니메이션해도 걸음마다 항목 수와 무관하게 활성 셀 수만큼 들고,

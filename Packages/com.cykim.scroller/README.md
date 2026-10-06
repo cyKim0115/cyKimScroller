@@ -19,6 +19,7 @@ uGUI `ScrollRect` 위에서 동작하는 가상화 스크롤러. 보이는 구�
 - 셀 크기 변경: `ResizeCellView`는 셀을 다시 바인딩하지 않고 크기만 바꾼다(바로 또는 애니메이션). 셀 위·아래 가장자리나 보던 화면을 지키고,
   애니메이션 중간 걸음은 접두합을 다시 더하지 않아 항목 수와 무관하게 활성 셀 수만큼 든다
 - 정착·고속 스크롤 상태: 움직임이 모두 끝났을 때 한 번 오는 `ScrollerSettled`(셀마다 `OnScrollerSettled`)와 히스테리시스를 둔 `IsFastScrolling`으로 무거운 로드를 미룬다
+- 끝 근접 이벤트: 콘텐츠 처음·끝까지 남은 거리가 `NearEdgeDistance` 이하가 되면 가장자리마다 한 번 알려 다음 페이지를 불러온다
 - 스크롤 핫패스 GC 할당 0 (PlayMode 테스트로 검증, 셀 훅을 켠 상태 포함)
 
 Unity 6000.0 이상, uGUI 2.0 이상 (6000.6.0f1 / uGUI 2.6.0에서 검증).
@@ -111,6 +112,7 @@ public class ItemCellView : CyScrollerCellView
 | 범위 | `NumberOfCells`, `NumberOfCellSlots`, `StartDataIndex`/`EndDataIndex`, `StartCellViewIndex`/`EndCellViewIndex`, `ActiveCellViews`, `GetCellViewAtDataIndex`, `GetCellViewAtCellIndex`, `IsDataIndexFullyVisible(dataIndex, margin)` |
 | 좌표 | `GetCellStart`, `GetCellSize`, `GetScrollPositionForDataIndex`, `GetScrollPositionForCellViewIndex`, `GetCellViewIndexAtPosition`, `GetDataIndexForCellViewIndex` |
 | 루프 | `Loop`, `LoopWhileDragging`, `ToggleLoop()`, `IgnoreLoopJump(bool)` |
+| 끝 근접 | `NearEdgeDistance`, `ScrollerNearEdge`, `ScrollEdge`(Start·End) |
 | 정리 | `ClearActive()`, `ClearRecycled()`, `ClearAll()`, `GetRecycledCellCount()` |
 | 이벤트 | `CellViewVisibilityChanged`, `CellViewWillDisplay`, `CellViewDidEndDisplay`, `CellViewPositionChanged`, `CellViewInstantiated`, `CellViewReused`, `CellViewWillRecycle`, `ScrollerScrolled`, `ScrollerSnapped`, `ScrollerScrollingChanged`, `ScrollerTweeningChanged`, `ScrollerSettled`, `ScrollerFastScrollingChanged` |
 | 위치 훅 | `NotifyCellPositions`, `CellPositionPivot` |
@@ -193,6 +195,42 @@ public class ThumbnailCellView : CyScrollerCellView
 - 가장자리 너머(Elastic)에서 되돌아오는 동안은 정착이 아니다. 되돌아오는 꼭짓점에서 속도가 0을 지나도 범위 안으로 돌아온 뒤 한 번만 정착한다.
 - `FastScrollExitThreshold`가 `FastScrollEnterThreshold`보다 크면 들어가는 값을 쓰고, 0이면 완전히 멈출 때 고속 스크롤이 끝난다. `FastScrollEnterThreshold`가 0이면 고속 스크롤을 끈다.
 - 두 상태 모두 스크롤러가 꺼져 있는 동안에는 갱신하지 않고, 다시 켜진 뒤 LateUpdate에서 맞춘다.
+
+### 끝 근접과 페이지 불러오기
+
+`NearEdgeDistance`(px, 기본 0 = 끔)를 정하면 콘텐츠 처음·끝까지 남은 거리가 그 값 이하가 될 때 `ScrollerNearEdge`가 가장자리마다 한 번 온다.
+LateUpdate 끝에서 알리므로 핸들러에서 바로 `InsertCells`를 불러도 된다.
+
+```csharp
+private void Awake()
+{
+    _scroller.NearEdgeDistance = 600f;   // 끝까지 600px 남으면
+    _scroller.ScrollerNearEdge += OnNearEdge;
+}
+
+private void OnNearEdge(CyScroller scroller, ScrollEdge edge)
+{
+    if (edge != ScrollEdge.End || _loading || _lastPageLoaded)
+    {
+        return;
+    }
+
+    _loading = true;
+    LoadNextPage(page =>
+    {
+        _loading = false;
+        _lastPageLoaded = page.Count == 0;
+        int at = _items.Count;
+        _items.AddRange(page);
+        _scroller.InsertCells(at, page.Count);   // 개수가 바뀌면 다시 알릴 수 있게 열린다
+    });
+}
+```
+
+- 알린 가장자리는 잠긴다. 남은 거리가 `NearEdgeDistance` × 1.5를 넘게 멀어지거나 데이터 개수가 바뀌면(리로드·삽입·삭제가 끝난 뒤) 다시 열린다.
+  그래서 페이지를 붙였는데도 아직 끝 근처면 다시 알리고, 개수가 그대로인 리로드는 다시 알리지 않는다.
+- 콘텐츠가 뷰포트보다 짧으면(빈 목록 포함) `End`만 알린다. 화면을 채울 때까지 페이지를 더 불러오는 용도다. 맨 위에서 시작하면 첫 판단에서 `Start`도 온다.
+- 루프 모드와 뷰포트 길이가 0일 때는 알리지 않는다. 증분 변경 배치가 열려 있는 동안에는 닫힌 뒤 판단한다.
 
 ### 항목 ID와 위치 앵커
 
