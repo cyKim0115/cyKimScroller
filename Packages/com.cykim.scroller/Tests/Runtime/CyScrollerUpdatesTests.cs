@@ -18,30 +18,48 @@ namespace CyKim.Scroller.Tests
         public readonly List<int> Items = new List<int>();
         public readonly List<float> Sizes = new List<float>();
         public CyScrollerCellView Prefab;
+
+        /// <summary>AltItems에 든 항목은 이 프리팹(다른 셀 식별자)으로 바인딩한다.</summary>
+        public CyScrollerCellView AltPrefab;
+        public readonly HashSet<int> AltItems = new HashSet<int>();
+
         public int GetCellViewCalls;
         public int GetCellViewSizeCalls;
 
         /// <summary>바인딩을 마친 뒤(반환 직전) 불린다.</summary>
         public System.Action<CyScroller, int> GetCellViewHook;
 
+        /// <summary>크기를 돌려주기 직전에 불린다 (증분 변경을 적용하는 중 삽입분 크기를 물을 때의 사용자 코드를 흉내 낸다).</summary>
+        public System.Action<CyScroller, int> GetCellViewSizeHook;
+
         public int GetNumberOfCells(CyScroller scroller) => Items.Count;
 
         public float GetCellViewSize(CyScroller scroller, int dataIndex)
         {
             GetCellViewSizeCalls++;
+            GetCellViewSizeHook?.Invoke(scroller, dataIndex);
             return Sizes[dataIndex];
         }
 
         public CyScrollerCellView GetCellView(CyScroller scroller, int dataIndex, int cellIndex)
         {
             GetCellViewCalls++;
-            var view = (TestCellView)scroller.GetCellView(Prefab);
-            view.BoundData = Items[dataIndex];
+            int item = Items[dataIndex];
+            CyScrollerCellView prefab = AltPrefab != null && AltItems.Contains(item) ? AltPrefab : Prefab;
+            var view = (TestCellView)scroller.GetCellView(prefab);
+            view.BoundData = item;
             view.BoundVersion = view.BindVersion;
             view.BoundItemId = view.HasItemId ? view.ItemId : -1L;
+
+            // 내용 갱신은 바인딩 뒤에 받은 것만 센다.
+            view.MaskedRefreshCount = 0;
+            view.LastChangeMask = 0;
             GetCellViewHook?.Invoke(scroller, dataIndex);
             return view;
         }
+
+        /// <summary>item 항목을 지금 바인딩하면 고를 셀 식별자.</summary>
+        public string ExpectedIdentifier(int item) => AltPrefab != null && AltItems.Contains(item) ? AltPrefab.CellIdentifier : Prefab.CellIdentifier;
 
         public void Insert(int index, int item, float size)
         {
@@ -78,7 +96,10 @@ namespace CyKim.Scroller.Tests
         }
     }
 
-    /// <summary>증분 구조 변경: InsertCells·RemoveCells·MoveCell, BeginUpdates/EndUpdates 배치, 위치 보존, 재진입·트윈·드래그·항목 ID.</summary>
+    /// <summary>
+    /// 증분 변경: InsertCells·RemoveCells·MoveCell, BeginUpdates/EndUpdates 배치, 위치 보존, 재진입·트윈·드래그·항목 ID와
+    /// 부분 갱신(RefreshCells·ReloadCellView·RefreshActiveCellViews(int)).
+    /// </summary>
     public class CyScrollerUpdatesTests
     {
         private const float EPSILON = 0.01f;
@@ -275,7 +296,7 @@ namespace CyKim.Scroller.Tests
         /// <summary>
         /// 고정 시드로 삽입·삭제·이동을 섞은 배치(가끔 배치 밖 단일 연산, 배치 중 스크롤)를 여러 번 적용하고, 매번 List 기준 모델과 비교한다:
         /// 활성 셀의 인덱스·바인딩 항목·위치, 활성 범위, 표시 이벤트 짝, 삽입분만 크기를 묻는지,
-        /// 배치 전 맨 앞 항목(지워지거나 옮겨졌으면 그 자리에 온 항목) 기준 화면 위치(<see cref="ScreenAnchorModel"/>), 계속 활성인 셀을 다시 바인딩하지 않는지.
+        /// 배치 전 맨 앞 항목(지워지거나 옮겨졌으면 그 자리에 온 항목) 기준 화면 위치(<see cref="ScreenAnchorModel"/>), 계속 활성인 셀을 다시 바인딩하지 않고 내용 갱신도 부르지 않는지.
         /// </summary>
         [Test]
         public void RandomBatches_MatchListModel()
@@ -290,13 +311,37 @@ namespace CyKim.Scroller.Tests
             RunRandomBatches(true, RANDOM_SEED + 1);
         }
 
-        private void RunRandomBatches(bool ids, int seed)
+        /// <summary>
+        /// <see cref="RandomBatches_MatchListModel"/>에 부분 갱신을 섞는다: RefreshCells(끝을 넘는 범위 포함)·RefreshActiveCellViews(int)와
+        /// ReloadCellView(크기와 가끔 셀 종류를 바꾼다). 위 비교에 더해 남은 셀은 모은 changeMask로 한 번만, 새로 바인딩한 셀에는 부르지 않는지,
+        /// 지웠거나 다시 받은 항목의 옛 셀은 회수 뒤 다른 항목에 다시 쓰였어도 받지 않았는지(셀별 호출 기록),
+        /// 다시 받은 항목만 크기를 다시 묻고 셀을 다시 바인딩하는지, 셀 식별자가 항목에 맞는지 본다.
+        /// </summary>
+        [Test]
+        public void RandomBatches_WithContentUpdates_MatchListModel()
+        {
+            RunRandomBatches(false, RANDOM_SEED + 2, true);
+        }
+
+        /// <summary><see cref="RandomBatches_WithContentUpdates_MatchListModel"/>을 ID 제공자 델리게이트로 돌린다 (다시 받은 항목만 ID를 묻는지, 사전이 맞는지).</summary>
+        [Test]
+        public void RandomBatches_WithContentUpdatesAndItemIds_MatchListModel()
+        {
+            RunRandomBatches(true, RANDOM_SEED + 3, true);
+        }
+
+        private void RunRandomBatches(bool ids, int seed, bool contentUpdates = false)
         {
             var random = new System.Random(seed);
             Create(120, 80f, ids: ids, spacing: 4f, padding: new RectOffset(0, 0, 12, 18), reload: false);
             for (int i = 0; i < _data.Sizes.Count; i++)
             {
                 _data.Sizes[i] = RandomSize(random);
+            }
+
+            if (contentUpdates)
+            {
+                _data.AltPrefab = _fixture.AltPrefab;
             }
 
             Scroller.LookAheadBefore = 60f;
@@ -310,6 +355,10 @@ namespace CyKim.Scroller.Tests
             var recorded = new List<RecordedOp>();
             var activeBefore = new Dictionary<int, TestCellView>();
             var versionsBefore = new Dictionary<int, int>();
+            var refreshCountsBefore = new Dictionary<int, int>();
+            var refreshHistoryBefore = new Dictionary<int, int>();
+            var reloadedItems = new HashSet<int>();
+            var expectedMasks = new Dictionary<int, int>();
             var anchorModel = new ScreenAnchorModel();
 
             for (int step = 0; step < RANDOM_STEPS; step++)
@@ -322,12 +371,15 @@ namespace CyKim.Scroller.Tests
                 oldItems.Clear();
                 oldItems.AddRange(_data.Items);
                 RecordActiveCells(activeBefore, versionsBefore);
+                RecordRefreshCounts(refreshCountsBefore, refreshHistoryBefore);
                 int sizeCalls = _data.GetCellViewSizeCalls;
                 int bindCalls = _data.GetCellViewCalls;
                 int idCalls = idData != null ? idData.GetItemIdCalls : 0;
                 insertedItems.Clear();
                 removedItems.Clear();
                 recorded.Clear();
+                reloadedItems.Clear();
+                expectedMasks.Clear();
                 bool batch = random.Next(3) != 0;
                 int operations = batch ? random.Next(1, 6) : 1;
 
@@ -341,6 +393,17 @@ namespace CyKim.Scroller.Tests
                 for (int op = 0; op < operations; op++)
                 {
                     int count = _data.Items.Count;
+                    if (contentUpdates && random.Next(3) == 0)
+                    {
+                        ApplyRandomContentUpdate(random, recorded, reloadedItems, expectedMasks);
+                        if (batch && random.Next(6) == 0)
+                        {
+                            Scroller.ScrollPosition += random.Next(-120, 121);
+                        }
+
+                        continue;
+                    }
+
                     int kind = random.Next(count > 160 ? 2 : 3);
                     if (count < 8 || kind == 2)
                     {
@@ -389,6 +452,7 @@ namespace CyKim.Scroller.Tests
                     Scroller.EndUpdates();
                 }
 
+                // 크기(와 ID)를 묻는 항목: 남은 삽입분과 남은 다시 받은 항목 (같은 배치에 삽입한 뒤 다시 받았으면 한 번).
                 int survived = 0;
                 foreach (int item in insertedItems)
                 {
@@ -398,16 +462,36 @@ namespace CyKim.Scroller.Tests
                     }
                 }
 
+                foreach (int item in reloadedItems)
+                {
+                    if (!insertedItems.Contains(item) && _data.Items.Contains(item))
+                    {
+                        survived++;
+                    }
+                }
+
+                // 갱신만 있는 배치는 배치 중 미룬 범위 갱신보다 먼저 활성 셀에 부른다 (그 뒤 범위를 벗어난 셀은 회수 전에 받았을 수 있다).
+                bool refreshOnlyBatch = batch;
+                for (int i = 0; i < recorded.Count; i++)
+                {
+                    refreshOnlyBatch &= recorded[i].Kind == 3;
+                }
+
                 string context = $"step {step} ({(batch ? "batch" : "single")})";
-                Assert.AreEqual(survived, _data.GetCellViewSizeCalls - sizeCalls, $"{context}: 남은 삽입분만 크기를 묻는다");
+                Assert.AreEqual(survived, _data.GetCellViewSizeCalls - sizeCalls, $"{context}: 남은 삽입분·다시 받은 항목만 크기를 묻는다");
                 AssertMatchesData(context);
                 AssertDisplayMatchesViewport(log, context);
                 AssertScreenAnchorKept(anchorModel, oldItems, recorded, in anchor, context);
-                AssertNoRebinding(activeBefore, versionsBefore, bindCalls, context);
+                AssertNoRebinding(activeBefore, versionsBefore, bindCalls, context, reloadedItems);
+                AssertRefreshCalls(activeBefore, refreshCountsBefore, refreshHistoryBefore, reloadedItems, expectedMasks, refreshOnlyBatch, context);
+                if (contentUpdates)
+                {
+                    AssertIdentifiersMatchItems(context);
+                }
 
                 if (idData != null)
                 {
-                    Assert.AreEqual(survived, idData.GetItemIdCalls - idCalls, $"{context}: 남은 삽입분만 ID를 묻는다");
+                    Assert.AreEqual(survived, idData.GetItemIdCalls - idCalls, $"{context}: 남은 삽입분·다시 받은 항목만 ID를 묻는다");
                     AssertIdLookups(idData, context);
                     for (int i = 0; i < removedItems.Count; i++)
                     {
@@ -417,13 +501,168 @@ namespace CyKim.Scroller.Tests
             }
         }
 
-        /// <summary>무작위 대조에서 적은 연산 (Kind 0 삽입·1 삭제·2 이동). 화면 앵커 모델에 다시 적용한다.</summary>
+        /// <summary>무작위 대조에서 적은 연산 (Kind 0 삽입·1 삭제·2 이동·3 내용 갱신·4 다시 받기). 화면 앵커 모델에 다시 적용한다.</summary>
         private struct RecordedOp
         {
             public int Kind;
             public int A;
             public int B;
             public int[] Items;
+        }
+
+        /// <summary>
+        /// 무작위 부분 갱신 하나. 셋에 하나는 다시 받기(크기를 바꾸고 둘에 하나는 셀 종류도 바꾼다), 나머지는 내용 갱신이다
+        /// (가끔 끝을 넘는 범위, 여덟에 하나는 RefreshActiveCellViews(int)). 그 시점 데이터로 항목마다 기대 changeMask를 OR로 모은다.
+        /// </summary>
+        private void ApplyRandomContentUpdate(System.Random random, List<RecordedOp> recorded, HashSet<int> reloadedItems, Dictionary<int, int> expectedMasks)
+        {
+            int count = _data.Items.Count;
+            if (random.Next(3) == 0)
+            {
+                int at = PickContentIndex(random, count);
+                int item = _data.Items[at];
+                _data.Sizes[at] = RandomSize(random);
+                if (random.Next(2) == 0 && !_data.AltItems.Remove(item))
+                {
+                    _data.AltItems.Add(item);
+                }
+
+                reloadedItems.Add(item);
+                recorded.Add(new RecordedOp { Kind = 4, A = at, B = 1 });
+                Scroller.ReloadCellView(at);
+                return;
+            }
+
+            int mask = 1 << random.Next(0, 6);
+            int start;
+            int length;
+            if (random.Next(8) == 0)
+            {
+                start = 0;
+                length = count;
+                Scroller.RefreshActiveCellViews(mask);
+            }
+            else
+            {
+                start = PickContentIndex(random, count);
+                int requested = random.Next(1, 9);
+                length = Mathf.Min(requested, count - start);
+                Scroller.RefreshCells(start, requested, mask);
+            }
+
+            for (int i = start; i < start + length; i++)
+            {
+                int item = _data.Items[i];
+                expectedMasks.TryGetValue(item, out int accumulated);
+                expectedMasks[item] = accumulated | mask;
+            }
+
+            recorded.Add(new RecordedOp { Kind = 3, A = start, B = length });
+        }
+
+        /// <summary>
+        /// 부분 갱신할 인덱스. 반은 지금 활성 범위(배치 중이면 배치 전 범위)에서 골라 남은 셀의 내용 갱신·다시 받기를 자주 거치게 하고, 나머지는 전체에서 고른다.
+        /// </summary>
+        private int PickContentIndex(System.Random random, int count)
+        {
+            int first = Scroller.StartDataIndex;
+            if (first >= 0 && random.Next(2) == 0)
+            {
+                int span = Scroller.EndDataIndex - first + 1;
+                return Mathf.Clamp(first + random.Next(span), 0, count - 1);
+            }
+
+            return random.Next(count);
+        }
+
+        /// <summary>활성 셀을 항목 값 → RefreshCellView(int) 호출 수, 항목 값 → 호출 기록(<see cref="TestCellView.RefreshHistory"/>) 길이로 적는다.</summary>
+        private void RecordRefreshCounts(Dictionary<int, int> counts, Dictionary<int, int> historyLengths)
+        {
+            counts.Clear();
+            historyLengths.Clear();
+            IReadOnlyList<CyScrollerCellView> active = Scroller.ActiveCellViews;
+            for (int i = 0; i < active.Count; i++)
+            {
+                var view = (TestCellView)active[i];
+                if (view != null)
+                {
+                    counts[view.BoundData] = view.MaskedRefreshCount;
+                    historyLengths[view.BoundData] = view.RefreshHistory.Count;
+                }
+            }
+        }
+
+        /// <summary>
+        /// 남은 셀(이번 단계 전후로 활성이고 다시 받지 않은 항목)은 모은 changeMask가 있으면 그 값으로 한 번만 받고, 없으면 받지 않았는지.
+        /// 새로 바인딩한 셀(새로 활성 범위에 들어온 항목, 삽입·다시 받은 항목)은 바인딩 뒤에 받지 않았는지.
+        /// 단계 전에 활성이던 셀은 바인딩해도 지우지 않는 호출 기록으로도 본다: 지웠거나 다시 받은 항목의 옛 셀은 회수 뒤 다른 항목에 다시 쓰였어도
+        /// 이번 단계에 한 번도 받지 않았고, 나머지는 받았다면 그 항목으로 모은 값을 받았는지. 활성 범위를 벗어난 셀은 받지 않는다
+        /// (갱신만 있는 배치(refreshOnlyBatch)는 배치 중 미룬 범위 갱신보다 먼저 부르므로 회수 전에 한 번 받았을 수 있다).
+        /// </summary>
+        private void AssertRefreshCalls(Dictionary<int, TestCellView> cellsBefore, Dictionary<int, int> countsBefore, Dictionary<int, int> historyBefore,
+            HashSet<int> reloaded, Dictionary<int, int> expectedMasks, bool refreshOnlyBatch, string context)
+        {
+            foreach (KeyValuePair<int, TestCellView> pair in cellsBefore)
+            {
+                int item = pair.Key;
+                TestCellView cell = pair.Value;
+                int from = historyBefore[item];
+                int received = cell.RefreshHistory.Count - from;
+                bool removed = !_data.Items.Contains(item);
+                if (removed || reloaded.Contains(item))
+                {
+                    Assert.AreEqual(0, received, $"{context}: {(removed ? "지운" : "다시 받은")} 항목 {item}의 옛 셀은 회수 전에도 내용 갱신을 받지 않는다");
+                    continue;
+                }
+
+                expectedMasks.TryGetValue(item, out int mask);
+                int expected = mask != 0 ? 1 : 0;
+                if (ReferenceEquals(CellForItem(item), cell))
+                {
+                    Assert.AreEqual(expected, received, $"{context}: 남은 항목 {item}의 셀이 받은 내용 갱신 수 (기록, 마스크 {mask})");
+                }
+                else
+                {
+                    Assert.LessOrEqual(received, refreshOnlyBatch ? expected : 0, $"{context}: 활성 범위를 벗어난 항목 {item}의 옛 셀이 받은 내용 갱신 수 (마스크 {mask})");
+                }
+
+                for (int k = from; k < cell.RefreshHistory.Count; k++)
+                {
+                    Assert.AreEqual(item, cell.RefreshHistory[k].Item, $"{context}: 항목 {item}의 셀은 그 항목에 바인딩된 채로만 받는다");
+                    Assert.AreEqual(mask, cell.RefreshHistory[k].Mask, $"{context}: 항목 {item}이 받은 changeMask (기록)");
+                }
+            }
+
+            IReadOnlyList<CyScrollerCellView> active = Scroller.ActiveCellViews;
+            for (int i = 0; i < active.Count; i++)
+            {
+                var view = (TestCellView)active[i];
+                int item = view.BoundData;
+                if (!reloaded.Contains(item) && cellsBefore.ContainsKey(item))
+                {
+                    expectedMasks.TryGetValue(item, out int mask);
+                    Assert.AreEqual(mask != 0 ? 1 : 0, view.MaskedRefreshCount - countsBefore[item], $"{context}: 남은 항목 {item} 내용 갱신 횟수 (마스크 {mask})");
+                    if (mask != 0)
+                    {
+                        Assert.AreEqual(mask, view.LastChangeMask, $"{context}: 남은 항목 {item}이 받은 changeMask");
+                    }
+                }
+                else
+                {
+                    Assert.AreEqual(0, view.MaskedRefreshCount, $"{context}: 새로 바인딩한 항목 {item}에는 내용 갱신을 부르지 않는다");
+                }
+            }
+        }
+
+        /// <summary>활성 셀마다 셀 식별자가 그 항목을 지금 바인딩할 때 고를 값과 같은지 (다시 받기로 셀 종류를 바꾼 항목 포함).</summary>
+        private void AssertIdentifiersMatchItems(string context)
+        {
+            IReadOnlyList<CyScrollerCellView> active = Scroller.ActiveCellViews;
+            for (int i = 0; i < active.Count; i++)
+            {
+                var view = (TestCellView)active[i];
+                Assert.AreEqual(_data.ExpectedIdentifier(view.BoundData), view.CellIdentifier, $"{context}: 항목 {view.BoundData} 셀 식별자");
+            }
         }
 
         /// <summary>활성 셀을 항목 값 → 셀, 항목 값 → BindVersion으로 적는다.</summary>
@@ -445,15 +684,28 @@ namespace CyKim.Scroller.Tests
 
         /// <summary>
         /// 계속 활성인 항목은 같은 셀이 다시 바인딩 없이(BindVersion 그대로) 들고 있고, 델리게이트 GetCellView는 새로 활성 범위에 들어온 항목 수만큼만 불렸는지.
+        /// 다시 받은 항목(reloaded)은 계속 활성이어도 다시 바인딩한다 (같은 셀을 풀에서 다시 받았으면 BindVersion이 달라진다).
         /// </summary>
-        private void AssertNoRebinding(Dictionary<int, TestCellView> cellsBefore, Dictionary<int, int> versionsBefore, int bindCalls, string context)
+        private void AssertNoRebinding(Dictionary<int, TestCellView> cellsBefore, Dictionary<int, int> versionsBefore, int bindCalls, string context,
+            HashSet<int> reloaded = null)
         {
             int newlyBound = 0;
             IReadOnlyList<CyScrollerCellView> active = Scroller.ActiveCellViews;
             for (int i = 0; i < active.Count; i++)
             {
                 var view = (TestCellView)active[i];
-                if (cellsBefore.TryGetValue(view.BoundData, out TestCellView previous))
+                bool wasActive = cellsBefore.TryGetValue(view.BoundData, out TestCellView previous);
+                if (reloaded != null && reloaded.Contains(view.BoundData))
+                {
+                    if (wasActive && ReferenceEquals(previous, view))
+                    {
+                        Assert.AreNotEqual(versionsBefore[view.BoundData], view.BindVersion, $"{context}: 다시 받은 항목 {view.BoundData}은 다시 바인딩한다");
+                    }
+
+                    Assert.AreEqual(view.BindVersion, view.BoundVersion, $"{context}: 다시 받은 항목 {view.BoundData}은 델리게이트가 바인딩했다");
+                    newlyBound++;
+                }
+                else if (wasActive)
                 {
                     Assert.AreSame(previous, view, $"{context}: 계속 활성인 항목 {view.BoundData}은 같은 셀");
                     Assert.AreEqual(versionsBefore[view.BoundData], view.BindVersion, $"{context}: 항목 {view.BoundData} 다시 바인딩하지 않음");
@@ -464,7 +716,7 @@ namespace CyKim.Scroller.Tests
                 }
             }
 
-            Assert.AreEqual(newlyBound, _data.GetCellViewCalls - bindCalls, $"{context}: 새로 활성 범위에 들어온 항목만 바인딩한다");
+            Assert.AreEqual(newlyBound, _data.GetCellViewCalls - bindCalls, $"{context}: 새로 활성 범위에 들어온 항목(과 다시 받은 항목)만 바인딩한다");
         }
 
         /// <summary>
@@ -490,8 +742,11 @@ namespace CyKim.Scroller.Tests
                     case 1:
                         model.Remove(op.A, op.B);
                         break;
-                    default:
+                    case 2:
                         model.Move(op.A, op.B);
+                        break;
+                    default:
+                        // 내용 갱신·다시 받기는 항목을 옮기지 않는다 (다시 받은 크기는 스크롤러 레이아웃이 반영한다).
                         break;
                 }
             }
@@ -1280,6 +1535,781 @@ namespace CyKim.Scroller.Tests
             Scroller.MoveCell(-3, 100);        // 0 → 마지막
             Scroller.MoveCell(4, 4);
             AssertMatchesData("remove/move clamped");
+        }
+
+        #endregion
+
+        #region Partial Refresh
+
+        [Test]
+        public void RefreshCells_PassesMaskOnlyToActiveCellsInRange()
+        {
+            Create(100);
+            Scroller.ScrollPosition = 1000f;   // 10~13번
+            TestCellView[] cells = ActiveCellsSnapshot();
+            int[] versions = BindVersions(cells);
+            int calls = _data.GetCellViewCalls;
+            int sizeCalls = _data.GetCellViewSizeCalls;
+
+            // [8, 12): 활성인 10·11번만 받는다. 기본 구현을 거쳐 무인자 RefreshCellView도 불린다.
+            Scroller.RefreshCells(8, 4, 0b101);
+            AssertMaskedRefreshes(cells, new[] { 1, 1, 0, 0 }, "range");
+            Assert.AreEqual(0b101, cells[0].LastChangeMask);
+            Assert.AreEqual(0b101, cells[1].LastChangeMask);
+            Assert.AreEqual(1, cells[0].RefreshCount, "기본 구현은 RefreshCellView()를 부른다");
+            Assert.AreEqual(0, cells[2].RefreshCount);
+
+            // 활성 범위 밖은 부르지 않는다. 기본 마스크는 ~0이다.
+            Scroller.RefreshCells(50, 10, 1);
+            AssertMaskedRefreshes(cells, new[] { 1, 1, 0, 0 }, "inactive");
+            Scroller.RefreshCells(13, 1);
+            AssertMaskedRefreshes(cells, new[] { 1, 1, 0, 1 }, "default mask");
+            Assert.AreEqual(~0, cells[3].LastChangeMask);
+
+            // 범위 밖 인자: [0, 개수) 안쪽만 쓰고, 개수·마스크가 0 이하이면 아무것도 하지 않는다.
+            Scroller.RefreshCells(-5, 17, 2);      // [0, 12)
+            AssertMaskedRefreshes(cells, new[] { 2, 2, 0, 1 }, "clamped start");
+            Scroller.RefreshCells(12, 1000, 4);    // [12, 100)
+            AssertMaskedRefreshes(cells, new[] { 2, 2, 1, 2 }, "clamped end");
+            Scroller.RefreshCells(100, 5, 8);
+            Scroller.RefreshCells(10, 0, 8);
+            Scroller.RefreshCells(10, -3, 8);
+            Scroller.RefreshCells(10, 4, 0);
+            AssertMaskedRefreshes(cells, new[] { 2, 2, 1, 2 }, "no-op arguments");
+
+            // 다시 바인딩하지 않고 크기도 묻지 않으며 화면도 그대로다.
+            Assert.AreEqual(calls, _data.GetCellViewCalls);
+            Assert.AreEqual(sizeCalls, _data.GetCellViewSizeCalls);
+            Assert.AreEqual(1000f, Scroller.ScrollPosition, EPSILON);
+            for (int i = 0; i < cells.Length; i++)
+            {
+                Assert.AreEqual(versions[i], cells[i].BindVersion, $"{i}번 셀 BindVersion 그대로");
+            }
+
+            AssertMatchesData("refresh");
+        }
+
+        [Test]
+        public void RefreshActiveCellViews_WithMask_PassesMask_AndParameterlessKeepsBehavior()
+        {
+            Create(100);
+            Scroller.ScrollPosition = 1000f;
+            TestCellView[] cells = ActiveCellsSnapshot();
+
+            Scroller.RefreshActiveCellViews(6);
+            AssertMaskedRefreshes(cells, new[] { 1, 1, 1, 1 }, "masked");
+            for (int i = 0; i < cells.Length; i++)
+            {
+                Assert.AreEqual(6, cells[i].LastChangeMask);
+                Assert.AreEqual(1, cells[i].RefreshCount, "기본 구현을 거쳐 RefreshCellView()도 한 번");
+            }
+
+            // 무인자 버전은 지금처럼 RefreshCellView()만 부른다.
+            Scroller.RefreshActiveCellViews();
+            AssertMaskedRefreshes(cells, new[] { 1, 1, 1, 1 }, "parameterless");
+            for (int i = 0; i < cells.Length; i++)
+            {
+                Assert.AreEqual(2, cells[i].RefreshCount);
+            }
+
+            Scroller.RefreshActiveCellViews(0);
+            AssertMaskedRefreshes(cells, new[] { 1, 1, 1, 1 }, "zero mask");
+
+            // 배치 안: 마스크 버전은 EndUpdates에서 남은 셀에 한 번, 무인자 버전은 지금처럼 바로 부른다.
+            Scroller.BeginUpdates();
+            Scroller.RefreshActiveCellViews(1);
+            Scroller.RefreshActiveCellViews();
+            Assert.AreEqual(3, cells[0].RefreshCount, "무인자 버전은 배치 중에도 바로 부른다");
+            AssertMaskedRefreshes(cells, new[] { 1, 1, 1, 1 }, "deferred in batch");
+            Scroller.RefreshActiveCellViews(2);
+            Scroller.EndUpdates();
+            AssertMaskedRefreshes(cells, new[] { 2, 2, 2, 2 }, "after batch");
+            for (int i = 0; i < cells.Length; i++)
+            {
+                Assert.AreEqual(3, cells[i].LastChangeMask, "배치 안 두 번은 OR로 합쳐 한 번");
+            }
+        }
+
+        [Test]
+        public void Batch_RefreshCells_AccumulatesMasks_FollowsItems_AndSkipsRemovedAndNewCells()
+        {
+            Create(100);
+            Scroller.ScrollPosition = 1000f;   // 10~13번
+            int a = _data.Items[10];
+            int b = _data.Items[11];
+            int c = _data.Items[12];
+            int d = _data.Items[13];
+            TestCellView cellA = CellForItem(a);
+            TestCellView cellB = CellForItem(b);
+            TestCellView cellC = CellForItem(c);
+            TestCellView cellD = CellForItem(d);
+            int versionA = cellA.BindVersion;
+            int versionB = cellB.BindVersion;
+            int historyD = cellD.RefreshHistory.Count;
+            int calls = _data.GetCellViewCalls;
+
+            Scroller.BeginUpdates();
+            Scroller.RefreshCells(10, 2, 1);        // a, b
+            Scroller.RefreshCells(11, 1, 4);        // b
+            _data.Insert(5, NextItem(), 100f);
+            _data.Insert(6, NextItem(), 100f);
+            Scroller.InsertCells(5, 2);             // a 12, b 13, c 14, d 15
+            Scroller.RefreshCells(13, 1, 2);        // b (밀린 인덱스)
+            Scroller.RefreshCells(14, 1, 8);        // c
+            Scroller.RefreshCells(15, 1, 16);       // d
+            _data.RemoveRange(15, 1);
+            Scroller.RemoveCells(15, 1);            // d 삭제: 모은 값은 버린다
+            int added = NextItem();
+            _data.Insert(13, added, 100f);
+            Scroller.InsertCells(13, 1);            // a 12, added 13, b 14, c 15
+            Scroller.RefreshCells(13, 1, 32);       // 삽입한 항목은 새로 바인딩하므로 부르지 않는다
+            Assert.AreEqual(0, cellA.MaskedRefreshCount + cellB.MaskedRefreshCount, "배치 중에는 부르지 않는다");
+            Scroller.EndUpdates();
+
+            // 위쪽 삽입 2개만큼 옮겨 a가 맨 앞에 남는다.
+            Assert.AreEqual(1200f, Scroller.ScrollPosition, EPSILON);
+            Assert.AreSame(cellA, CellForItem(a));
+            Assert.AreSame(cellB, CellForItem(b));
+            Assert.AreSame(cellC, CellForItem(c));
+            Assert.AreEqual(1, cellA.MaskedRefreshCount);
+            Assert.AreEqual(1, cellA.LastChangeMask);
+            Assert.AreEqual(1, cellB.MaskedRefreshCount, "셀마다 한 번");
+            Assert.AreEqual(1 | 4 | 2, cellB.LastChangeMask, "같은 항목에 모은 값을 OR로 합친다");
+            Assert.AreEqual(1, cellC.MaskedRefreshCount);
+            Assert.AreEqual(8, cellC.LastChangeMask);
+            Assert.AreEqual(versionA, cellA.BindVersion, "다시 바인딩하지 않는다");
+            Assert.AreEqual(versionB, cellB.BindVersion);
+
+            TestCellView addedCell = CellForItem(added);
+            Assert.IsNotNull(addedCell);
+            Assert.AreEqual(0, addedCell.MaskedRefreshCount, "새로 바인딩한 셀에는 부르지 않는다");
+            Assert.IsNull(CellForItem(d));
+
+            // 회수한 d의 셀은 풀에서 곧바로 삽입 항목에 다시 쓰일 수 있고, 그러면 바인딩하며 MaskedRefreshCount가 0으로 돌아간다.
+            // 그래서 바인딩해도 지우지 않는 호출 기록으로 회수 전에도 받지 않았는지 본다.
+            Assert.AreEqual(historyD, cellD.RefreshHistory.Count, "지운 항목의 셀은 (회수 전에도) 내용 갱신을 받지 않는다");
+            Assert.AreEqual(calls + 1, _data.GetCellViewCalls, "새 항목만 바인딩한다");
+            AssertMatchesData("batch refresh");
+        }
+
+        [Test]
+        public void RefreshCells_LoopMode_RefreshesEveryCopyWithoutReload()
+        {
+            Create(3, loop: true);   // 사이클 300, 뷰포트 400: 가운데 세트에서 0번 사본이 둘 보인다
+            Assert.IsTrue(Scroller.Layout.IsLoop);
+            int calls = _data.GetCellViewCalls;
+            int copies = CountActiveCopies(0);
+            Assert.GreaterOrEqual(copies, 2, "0번 사본이 여럿 활성이어야 한다");
+
+            Scroller.RefreshCells(0, 1, 8);
+            AssertCopiesRefreshed(0, 1, 8, "single");
+            AssertCopiesRefreshed(1, 0, 0, "single, other item");
+
+            // 갱신만 있는 배치는 루프 모드에서도 리로드하지 않고 사본마다 한 번 부른다.
+            Scroller.BeginUpdates();
+            Scroller.RefreshCells(0, 1, 1);
+            Scroller.RefreshCells(0, 2, 2);
+            Scroller.EndUpdates();
+            AssertCopiesRefreshed(0, 2, 3, "batch");
+            AssertCopiesRefreshed(1, 1, 2, "batch, other item");
+            AssertCopiesRefreshed(2, 0, 0, "batch, untouched item");
+            Assert.AreEqual(calls, _data.GetCellViewCalls, "다시 바인딩하지 않는다");
+
+            // 다시 받기는 루프 모드에서 다른 증분 변경처럼 앵커 보존 리로드로 바뀐다.
+            CyScrollerAnchor before = Scroller.CaptureAnchor();
+            _data.Sizes[1] = 150f;
+            Scroller.ReloadCellView(1);
+            Assert.AreEqual(150f, Scroller.GetCellSize(1), EPSILON);
+            Assert.Greater(_data.GetCellViewCalls, calls, "루프는 증분 대신 전체 리로드로 바꾼다");
+            CyScrollerAnchor after = Scroller.CaptureAnchor();
+            Assert.AreEqual(before.DataIndex, after.DataIndex, "ReloadData(FirstVisible)처럼 맨 앞 항목을 지킨다");
+            Assert.AreEqual(before.Offset, after.Offset, EPSILON);
+        }
+
+        [Test]
+        public void ReloadCellView_IdentifierChange_ReplacesCellAndKeepsDisplayPairs()
+        {
+            Create(100, reload: false);
+            _data.AltPrefab = _fixture.AltPrefab;
+            var log = new DisplayLog(Scroller);
+            Scroller.ReloadData();
+            Scroller.ScrollPosition = 1000f;   // 10~13번
+            int item = _data.Items[11];
+            TestCellView old = CellForItem(item);
+            Assert.AreEqual("Test", old.CellIdentifier);
+            int oldVersion = old.BindVersion;
+            TestCellView[] others = { CellForItem(_data.Items[10]), CellForItem(_data.Items[12]), CellForItem(_data.Items[13]) };
+            int[] otherVersions = BindVersions(others);
+            int calls = _data.GetCellViewCalls;
+            int sizeCalls = _data.GetCellViewSizeCalls;
+            int instantiated = _fixture.InstantiatedCount;
+            log.Log.Clear();
+
+            // 셀 종류가 바뀌었다: 다른 프리팹 셀로 바꾼다.
+            _data.AltItems.Add(item);
+            Scroller.ReloadCellView(11);
+
+            TestCellView replaced = CellForItem(item);
+            Assert.AreNotSame(old, replaced);
+            Assert.AreEqual("Alt", replaced.CellIdentifier);
+            Assert.AreEqual(replaced.BindVersion, replaced.BoundVersion, "델리게이트가 새로 바인딩했다");
+            Assert.IsFalse(old.IsBound, "옛 셀은 회수했다");
+            Assert.AreEqual(oldVersion + 1, old.BindVersion, "회수하면 BindVersion이 는다");
+            Assert.AreEqual(instantiated + 1, _fixture.InstantiatedCount);
+            Assert.AreEqual(calls + 1, _data.GetCellViewCalls, "그 항목만 다시 받는다");
+            Assert.AreEqual(sizeCalls + 1, _data.GetCellViewSizeCalls, "그 항목만 크기를 다시 묻는다");
+            CollectionAssert.AreEqual(new[] { "end " + item, "recycle " + item, "will " + item }, log.Log,
+                "표시 끝 → 회수 → 새 셀 표시 시작. 다른 셀에는 표시 이벤트가 없다");
+            for (int i = 0; i < others.Length; i++)
+            {
+                Assert.AreSame(others[i], CellForItem(others[i].BoundData));
+                Assert.AreEqual(otherVersions[i], others[i].BindVersion, "다른 셀은 다시 바인딩하지 않는다");
+            }
+
+            Assert.AreEqual(1000f, Scroller.ScrollPosition, EPSILON);
+            AssertMatchesData("identifier change");
+            AssertDisplayMatchesViewport(log, "identifier change");
+
+            // 되돌리면 풀에 있던 옛 셀을 다시 받는다. 같은 셀이어도 다시 바인딩이라 BindVersion이 는다.
+            _data.AltItems.Remove(item);
+            Scroller.ReloadCellView(11);
+            Assert.AreSame(old, CellForItem(item));
+            Assert.AreEqual(oldVersion + 2, old.BindVersion);
+            Assert.AreEqual("Test", old.CellIdentifier);
+            AssertMatchesData("identifier restored");
+            AssertDisplayMatchesViewport(log, "identifier restored");
+        }
+
+        [Test]
+        public void ReloadCellView_SizeChanges_KeepScreen_AndInactiveItemsOnlyUpdateSize()
+        {
+            Create(100);
+            Scroller.ScrollPosition = 1050f;   // 맨 앞 10번 안 50
+            var items = new List<int>();
+            var offsets = new List<float>();
+            var cells = new List<TestCellView>();
+            for (int index = 10; index <= 14; index++)
+            {
+                items.Add(_data.Items[index]);
+                offsets.Add(ScreenOffsetOfItem(_data.Items[index]));
+                cells.Add(CellForItem(_data.Items[index]));
+            }
+
+            int calls = _data.GetCellViewCalls;
+            int sizeCalls = _data.GetCellViewSizeCalls;
+
+            // 뷰포트 위 비활성 항목이 커졌다: 크기만 다시 묻고 그만큼 옮겨 화면을 지킨다.
+            _data.Sizes[3] = 160f;
+            Scroller.ReloadCellView(3);
+            Assert.AreEqual(1110f, Scroller.ScrollPosition, EPSILON);
+            Assert.AreEqual(160f, Scroller.GetCellSize(3), EPSILON);
+            Assert.AreEqual(calls, _data.GetCellViewCalls, "비활성 항목은 셀을 받지 않는다");
+            Assert.AreEqual(sizeCalls + 1, _data.GetCellViewSizeCalls);
+            AssertSameScreen(items, offsets, cells, "reload above");
+            AssertMatchesData("reload above");
+
+            // 뷰포트 아래 비활성 항목: 위치는 그대로이고 콘텐츠 길이만 바뀐다.
+            float content = Scroller.ContentSize;
+            _data.Sizes[60] = 40f;
+            Scroller.ReloadCellView(60);
+            Assert.AreEqual(1110f, Scroller.ScrollPosition, EPSILON);
+            Assert.AreEqual(content - 60f, Scroller.ContentSize, EPSILON);
+            Assert.AreEqual(calls, _data.GetCellViewCalls);
+            AssertSameScreen(items, offsets, cells, "reload below");
+
+            // 크기가 그대로면 다시 받아도 화면은 그대로다 (보이는 항목이면 그 셀만 다시 바인딩).
+            Scroller.ReloadCellView(12);
+            Assert.AreEqual(1110f, Scroller.ScrollPosition, EPSILON);
+            Assert.AreEqual(calls + 1, _data.GetCellViewCalls);
+            AssertMatchesData("reload same size");
+
+            // 맨 앞 항목 자신이 커져도 그 항목 안 거리(50)를 지킨다. 뒤 항목만 밀린다.
+            _data.Sizes[10] = 300f;
+            Scroller.ReloadCellView(10);
+            Assert.AreEqual(1110f, Scroller.ScrollPosition, EPSILON);
+            Assert.AreEqual(-50f, ScreenOffsetOfItem(items[0]), EPSILON);
+            Assert.AreEqual(250f, ScreenOffsetOfItem(items[1]), EPSILON);
+            AssertMatchesData("reload first visible");
+        }
+
+        [Test]
+        public void ReloadCellView_InBatch_FollowsIndexShiftsAndSkipsRemovedItems()
+        {
+            Create(100, reload: false);
+            _data.AltPrefab = _fixture.AltPrefab;
+            Scroller.ReloadData();
+            Scroller.ScrollPosition = 1000f;   // 10~13번
+            int a = _data.Items[10];
+            int b = _data.Items[11];
+            int c = _data.Items[12];
+            int d = _data.Items[13];
+            TestCellView cellA = CellForItem(a);
+            TestCellView cellB = CellForItem(b);
+            int versionA = cellA.BindVersion;
+            int versionB = cellB.BindVersion;
+            int calls = _data.GetCellViewCalls;
+            int sizeCalls = _data.GetCellViewSizeCalls;
+
+            Scroller.BeginUpdates();
+            _data.AltItems.Add(c);
+            Scroller.ReloadCellView(12);          // c
+            _data.Insert(0, NextItem(), 100f);
+            Scroller.InsertCells(0, 1);           // c 13, d 14
+            _data.Sizes[13] = 150f;               // EndUpdates에서 최종 인덱스로 크기를 묻는다
+            Scroller.ReloadCellView(14);          // d
+            _data.RemoveRange(14, 1);
+            Scroller.RemoveCells(14, 1);          // d 삭제: 다시 받지 않는다
+            Assert.AreEqual(sizeCalls, _data.GetCellViewSizeCalls, "배치 중에는 묻지 않는다");
+            Scroller.EndUpdates();
+
+            Assert.AreEqual(sizeCalls + 2, _data.GetCellViewSizeCalls, "삽입한 항목과 c만 묻는다");
+            Assert.AreEqual(150f, Scroller.GetCellSize(13), EPSILON);
+            Assert.AreEqual(1100f, Scroller.ScrollPosition, EPSILON, "위쪽 삽입만큼 옮긴다");
+            TestCellView cellC = CellForItem(c);
+            Assert.AreEqual("Alt", cellC.CellIdentifier, "옮겨진 c를 다시 받았다");
+            Assert.AreSame(cellA, CellForItem(a));
+            Assert.AreSame(cellB, CellForItem(b));
+            Assert.AreEqual(versionA, cellA.BindVersion);
+            Assert.AreEqual(versionB, cellB.BindVersion);
+            Assert.IsNull(CellForItem(d));
+
+            // 다시 받은 c와 뷰포트 끝에 새로 들어온 e(옛 14번)만 바인딩한다.
+            Assert.AreEqual(calls + 2, _data.GetCellViewCalls);
+            AssertMatchesData("reload in batch");
+        }
+
+        [Test]
+        public void ReloadCellView_ItemIdChange_UpdatesLookup()
+        {
+            var data = (ListIdTestDelegate)Create(50, ids: true);
+            int idCalls = data.GetItemIdCalls;
+
+            // 같은 ID로 다시 받으면 사전은 그대로다.
+            Scroller.ReloadCellView(7);
+            Assert.AreEqual(idCalls + 1, data.GetItemIdCalls, "그 항목만 ID를 다시 묻는다");
+            AssertIdLookups(data, "same id");
+
+            // 보이는 자리(0~3번)의 항목이 다른 ID로 바뀌었다.
+            int oldId = data.Items[2];
+            int newId = NextItem();
+            data.Items[2] = newId;
+            Scroller.ReloadCellView(2);
+            Assert.AreEqual(idCalls + 2, data.GetItemIdCalls);
+            Assert.AreEqual(-1, Scroller.FindDataIndexForItemId(oldId));
+            Assert.AreEqual(2, Scroller.FindDataIndexForItemId(newId));
+            Assert.AreEqual(newId, CellForItem(newId).ItemId, "보이는 셀은 새 ID로 다시 바인딩한다");
+            Assert.AreEqual(newId, CellForItem(newId).BoundItemId, "델리게이트가 바인딩하면서 읽은 ID도 새 값이다");
+            AssertIdLookups(data, "changed id");
+
+            // 뒤쪽 항목과 같은 ID가 되면 다시 받을 때처럼 경고하고 앞 인덱스가 이긴다. 다시 고치면 뒤쪽 항목이 그 ID를 되찾는다.
+            int duplicate = data.Items[30];
+            int original = data.Items[20];
+            data.Items[20] = duplicate;
+            LogAssert.Expect(LogType.Warning, new Regex("같은 ItemId"));
+            Scroller.ReloadCellView(20);
+            Assert.AreEqual(20, Scroller.FindDataIndexForItemId(duplicate));
+            Assert.AreEqual(-1, Scroller.FindDataIndexForItemId(original));
+            data.Items[20] = original;
+            Scroller.ReloadCellView(20);
+            Assert.AreEqual(30, Scroller.FindDataIndexForItemId(duplicate));
+            AssertIdLookups(data, "duplicate restored");
+            AssertMatchesData("ids");
+        }
+
+        [Test]
+        public void RefreshCells_InsideCallbacks_AppliesToCurrentItemsWithoutReload()
+        {
+            Create(100, reload: false);
+            var log = new DisplayLog(Scroller);
+            Scroller.ReloadData();
+            Scroller.ScrollPosition = 1000f;   // 10~13번
+            int removed = _data.Items[11];
+            int next = _data.Items[12];
+            TestCellView removedCell = CellForItem(removed);
+            TestCellView nextCell = CellForItem(next);
+
+            // 증분 변경을 적용하는 중(지운 셀의 표시 끝)에 데이터 기준 인덱스로 부른다. 그때 셀은 아직 배치 전 인덱스다.
+            bool calledDuringApply = false;
+            Scroller.CellViewDidEndDisplay += (scroller, view) =>
+            {
+                if (!calledDuringApply && ((TestCellView)view).BoundData == removed)
+                {
+                    calledDuringApply = true;
+                    scroller.RefreshCells(11, 1, 64);   // 삭제 뒤 11번 = next
+                }
+            };
+
+            int calls = _data.GetCellViewCalls;
+            int removedHistory = removedCell.RefreshHistory.Count;
+            int nextHistory = nextCell.RefreshHistory.Count;
+            _data.RemoveRange(11, 1);
+            Scroller.RemoveCells(11, 1);
+            Assert.IsTrue(calledDuringApply);
+            Assert.AreEqual(1, nextCell.MaskedRefreshCount, "셀을 새 인덱스로 맞춘 뒤 그 항목의 셀에 부른다");
+            Assert.AreEqual(64, nextCell.LastChangeMask);
+            Assert.AreEqual(nextHistory + 1, nextCell.RefreshHistory.Count, "그 항목의 셀에 한 번");
+            Assert.AreEqual(next, nextCell.RefreshHistory[nextHistory].Item);
+
+            // 지운 항목의 셀은 회수된 뒤 뷰포트 끝에 새로 들어온 항목에 다시 쓰이며 MaskedRefreshCount가 0으로 돌아간다.
+            // 바인딩해도 지우지 않는 호출 기록으로, 지연 적용 대신(또는 함께) 옛 인덱스의 셀에 바로 부르지 않았는지 본다.
+            Assert.AreEqual(removedHistory, removedCell.RefreshHistory.Count, "지운 항목의 셀에는 (회수 전에도) 부르지 않는다");
+            Assert.AreEqual(calls + 1, _data.GetCellViewCalls, "리로드하지 않는다 (뷰포트 끝에 새로 들어온 항목만)");
+            AssertMatchesData("refresh during apply");
+            AssertDisplayMatchesViewport(log, "refresh during apply");
+
+            // 범위 갱신 중(표시 시작 이벤트)에는 바로 부른다.
+            bool calledDuringRange = false;
+            Scroller.CellViewWillDisplay += (scroller, view) =>
+            {
+                if (!calledDuringRange && view.DataIndex == 30)
+                {
+                    calledDuringRange = true;
+                    scroller.RefreshCells(30, 1, 128);
+                }
+            };
+
+            calls = _data.GetCellViewCalls;
+            Scroller.ScrollPosition = 2950f;   // 29~33번
+            Assert.IsTrue(calledDuringRange);
+            TestCellView cell30 = CellForItem(_data.Items[30]);
+            Assert.AreEqual(1, cell30.MaskedRefreshCount);
+            Assert.AreEqual(128, cell30.LastChangeMask);
+            Assert.AreEqual(calls + 5, _data.GetCellViewCalls, "리로드하지 않는다");
+            AssertMatchesData("refresh during range update");
+            AssertDisplayMatchesViewport(log, "refresh during range update");
+        }
+
+        /// <summary>
+        /// 표시 시작 핸들러 안에서 갱신만 있는 배치를 닫아도 리로드하지 않는다. 배치 밖 RefreshCells처럼 그 셀에 모은 changeMask로 바로 한 번 부르고,
+        /// 크기를 다시 묻거나 셀을 다시 바인딩하지 않는다. 리로드가 표시 시작을 다시 부르고 핸들러가 또 리로드를 미루는 반복도 생기지 않는다.
+        /// </summary>
+        [UnityTest]
+        public IEnumerator RefreshBatch_InsideDisplayCallback_RefreshesWithoutReload()
+        {
+            Create(1000, reload: false);
+            var log = new DisplayLog(Scroller);
+            Scroller.ReloadData();
+            int displays = 0;
+            Scroller.CellViewWillDisplay += (scroller, view) =>
+            {
+                displays++;
+                scroller.BeginUpdates();
+                scroller.RefreshCells(view.DataIndex, 1, 4);
+                scroller.RefreshCells(view.DataIndex, 1, 8);
+                scroller.EndUpdates();
+            };
+
+            int sizeCalls = _data.GetCellViewSizeCalls;
+            int calls = _data.GetCellViewCalls;
+            Scroller.ScrollPosition = 50000f;   // 500~503번이 새로 보인다
+
+            Assert.AreEqual(4, displays);
+            Assert.AreEqual(calls + 4, _data.GetCellViewCalls, "새로 보이는 셀만 바인딩한다");
+            TestCellView[] cells = ActiveCellsSnapshot();
+            int[] versions = BindVersions(cells);
+            AssertMaskedRefreshes(cells, new[] { 1, 1, 1, 1 }, "in display callback");
+            for (int i = 0; i < cells.Length; i++)
+            {
+                Assert.AreEqual(4 | 8, cells[i].LastChangeMask, "같은 배치의 값을 OR로 합쳐 한 번");
+            }
+
+            for (int frame = 0; frame < 3; frame++)
+            {
+                yield return null;
+            }
+
+            Assert.AreEqual(sizeCalls, _data.GetCellViewSizeCalls, "리로드하지 않는다 (크기를 다시 묻지 않는다)");
+            Assert.AreEqual(calls + 4, _data.GetCellViewCalls, "다시 바인딩하지 않는다");
+            Assert.AreEqual(4, displays, "표시 시작이 되풀이되지 않는다");
+            for (int i = 0; i < cells.Length; i++)
+            {
+                Assert.AreSame(cells[i], CellForItem(cells[i].BoundData), $"항목 {cells[i].BoundData} 같은 셀");
+                Assert.AreEqual(versions[i], cells[i].BindVersion, $"항목 {cells[i].BoundData} BindVersion 그대로");
+            }
+
+            AssertMaskedRefreshes(cells, new[] { 1, 1, 1, 1 }, "after frames");
+            AssertMatchesData("after frames");
+            AssertDisplayMatchesViewport(log, "after frames");
+        }
+
+        /// <summary>
+        /// 증분 변경을 적용하는 중(삽입분 크기를 묻는 델리게이트 안)에 빈 배치를 닫고 이어서 갱신만 있는 배치를 닫아도,
+        /// 적용 중인 연산 목록이 그 배치들의 기록 목록이 되거나 비워지지 않는다: 위쪽 삽입만큼 위치를 옮겨 보던 화면을 지키고,
+        /// 남은 셀은 새 인덱스로 옮겨 다시 바인딩하지 않으며, 갱신은 셀을 새 인덱스로 맞춘 뒤 한 번 부른다 (리로드 없음).
+        /// </summary>
+        [Test]
+        public void BatchesClosedInsideDelegateDuringApply_KeepAppliedOperations()
+        {
+            Create(100, reload: false);
+            var log = new DisplayLog(Scroller);
+            Scroller.ReloadData();
+            Scroller.ScrollPosition = 1030f;   // 맨 앞 10번 안 30. 10~14번
+            int top = _data.Items[10];
+            int refreshed = _data.Items[12];
+            TestCellView[] cells = ActiveCellsSnapshot();
+            int[] versions = BindVersions(cells);
+            TestCellView refreshedCell = CellForItem(refreshed);
+            int history = refreshedCell.RefreshHistory.Count;
+            int calls = _data.GetCellViewCalls;
+            int sizeCalls = _data.GetCellViewSizeCalls;
+            int hooks = 0;
+            _data.GetCellViewSizeHook = (scroller, dataIndex) =>
+            {
+                hooks++;
+                if (hooks == 1)
+                {
+                    // 빈 배치: 범위 밖 삭제는 연산을 남기지 않는다.
+                    scroller.RemoveCells(999, 1);
+                }
+                else if (hooks == 2)
+                {
+                    // 갱신만 있는 배치. 인덱스는 데이터 기준(삽입 뒤)이다.
+                    scroller.BeginUpdates();
+                    scroller.RefreshCells(_data.Items.IndexOf(refreshed), 1, 256);
+                    scroller.EndUpdates();
+                }
+            };
+
+            // 뷰포트 위 3번 자리에 두 개 삽입: 적용하면서 삽입분 크기를 물을 때 위 핸들러가 돈다.
+            _data.Insert(3, NextItem(), 100f);
+            _data.Insert(4, NextItem(), 100f);
+            Scroller.InsertCells(3, 2);
+
+            Assert.AreEqual(1230f, Scroller.ScrollPosition, EPSILON, "적용 중인 삽입 연산만큼 위치를 옮긴다");
+            Assert.AreEqual(-30f, ScreenOffsetOfItem(top), EPSILON, "보던 맨 앞 항목이 같은 자리");
+            Assert.AreEqual(sizeCalls + 2, _data.GetCellViewSizeCalls, "삽입분만 크기를 묻는다 (리로드하지 않는다)");
+            Assert.AreEqual(2, hooks);
+            Assert.AreEqual(calls, _data.GetCellViewCalls, "남은 셀은 다시 바인딩하지 않는다");
+            for (int i = 0; i < cells.Length; i++)
+            {
+                int item = cells[i].BoundData;
+                Assert.AreSame(cells[i], CellForItem(item), $"항목 {item} 같은 셀");
+                Assert.AreEqual(versions[i], cells[i].BindVersion, $"항목 {item} BindVersion 그대로");
+                Assert.AreEqual(_data.Items.IndexOf(item), cells[i].DataIndex, $"항목 {item} 새 인덱스");
+            }
+
+            Assert.AreEqual(history + 1, refreshedCell.RefreshHistory.Count, "갱신은 셀을 새 인덱스로 맞춘 뒤 한 번");
+            Assert.AreEqual(refreshed, refreshedCell.RefreshHistory[history].Item);
+            Assert.AreEqual(256, refreshedCell.RefreshHistory[history].Mask);
+            AssertMatchesData("after apply");
+            AssertDisplayMatchesViewport(log, "after apply");
+        }
+
+        /// <summary>
+        /// 갱신만 있는 배치를 적용하는 중(셀의 RefreshCellView 안)에 빈 배치를 닫아도 배치 중 스크롤로 미룬 범위 갱신을 잃지 않는다:
+        /// 갱신은 배치 전 활성 셀에 먼저 부르고, 바깥 EndUpdates가 끝나면 활성 셀이 새 위치에 맞는다.
+        /// </summary>
+        [Test]
+        public void EmptyBatchClosedWhileApplyingRefreshes_KeepsDeferredRangeUpdate()
+        {
+            Create(100);
+            TestCellView[] cells = ActiveCellsSnapshot();   // 0~3번
+            int hooks = 0;
+            for (int i = 0; i < cells.Length; i++)
+            {
+                cells[i].RefreshHook = (view, mask) =>
+                {
+                    // 늘 배치로 감싸는 도우미처럼 빈 배치를 닫는다.
+                    hooks++;
+                    Scroller.BeginUpdates();
+                    Scroller.EndUpdates();
+                };
+            }
+
+            Scroller.BeginUpdates();
+            Scroller.ScrollPosition = 1000f;   // 범위 갱신은 배치 끝으로 미룬다
+            Scroller.RefreshCells(0, 4, 1);
+            Scroller.EndUpdates();
+
+            Assert.AreEqual(4, hooks, "갱신은 배치 전 활성 셀(0~3번)에 먼저 부른다");
+            Assert.AreEqual(1000f, Scroller.ScrollPosition, EPSILON);
+            Assert.AreEqual(10, Scroller.StartDataIndex, "미룬 범위 갱신을 바깥 EndUpdates에서 처리했다");
+            AssertMatchesData("after batch");
+        }
+
+        /// <summary>
+        /// ReloadCellView는 [0, 개수) 밖 인덱스를 무시한다 (크기·셀을 묻지 않고 예외도 없다). 배치 안에서는 앞 연산까지 반영한 개수가 기준이라
+        /// 끝을 지운 뒤 지운 자리(옛 마지막 항목 포함)는 무시하고, 같은 배치에서 삽입해 늘어난 개수까지는 받는다.
+        /// </summary>
+        [Test]
+        public void ReloadCellView_OutOfRangeIndex_IsIgnored()
+        {
+            Create(10);   // 첫 로드라 레이아웃 버퍼가 10개로 딱 맞다 (10번 자리를 건드리면 예외가 난다)
+            int calls = _data.GetCellViewCalls;
+            int sizeCalls = _data.GetCellViewSizeCalls;
+
+            Scroller.ReloadCellView(-1);
+            Scroller.ReloadCellView(_data.Items.Count);
+            Scroller.ReloadCellView(int.MaxValue);
+            Scroller.ReloadCellView(int.MinValue);
+            Assert.AreEqual(calls, _data.GetCellViewCalls, "범위 밖은 셀을 다시 받지 않는다");
+            Assert.AreEqual(sizeCalls, _data.GetCellViewSizeCalls, "범위 밖은 크기를 묻지 않는다");
+            AssertMatchesData("outside batch");
+
+            // 배치 안: 끝 3개를 지운 뒤 개수는 7이다. 지운 자리(7번, 옛 마지막 9번)는 무시한다.
+            Scroller.BeginUpdates();
+            _data.RemoveRange(7, 3);
+            Scroller.RemoveCells(7, 3);
+            Scroller.ReloadCellView(7);
+            Scroller.ReloadCellView(9);
+            Scroller.ReloadCellView(-1);
+            Assert.DoesNotThrow(() => Scroller.EndUpdates());
+            Assert.AreEqual(7, Scroller.NumberOfCells);
+            Assert.AreEqual(sizeCalls, _data.GetCellViewSizeCalls, "지운 자리는 크기를 묻지 않는다");
+            Assert.AreEqual(calls, _data.GetCellViewCalls);
+            AssertMatchesData("after removing tail");
+
+            // 같은 배치에서 삽입해 늘어난 개수까지 받는다: 맨 앞 삽입 뒤 마지막 항목(7번 = 배치 전 개수)은 받고 그 너머(8번)는 무시한다.
+            Scroller.BeginUpdates();
+            _data.Insert(0, NextItem(), 100f);
+            Scroller.InsertCells(0, 1);
+            _data.Sizes[7] = 140f;
+            Scroller.ReloadCellView(7);
+            Scroller.ReloadCellView(8);
+            Assert.DoesNotThrow(() => Scroller.EndUpdates());
+            Assert.AreEqual(8, Scroller.NumberOfCells);
+            Assert.AreEqual(sizeCalls + 2, _data.GetCellViewSizeCalls, "삽입한 항목과 다시 받은 마지막 항목만 묻는다");
+            Assert.AreEqual(140f, Scroller.GetCellSize(7), EPSILON, "늘어난 개수를 기준으로 마지막 항목을 다시 받았다");
+            AssertMatchesData("after inserting at front");
+        }
+
+        [UnityTest]
+        public IEnumerator ReloadCellView_InsideDisplayCallback_IsDeferredToAnchorReload()
+        {
+            Create(100, reload: false);
+            var log = new DisplayLog(Scroller);
+            Scroller.ReloadData();
+            bool reloaded = false;
+            Scroller.CellViewWillDisplay += (scroller, view) =>
+            {
+                if (!reloaded && view.DataIndex == 50)
+                {
+                    reloaded = true;
+                    _data.Sizes[50] = 180f;
+                    scroller.ReloadCellView(50);
+                }
+            };
+
+            Assert.DoesNotThrow(() => Scroller.ScrollPosition = 5000f);
+            Assert.IsTrue(reloaded);
+            Assert.AreEqual(100f, Scroller.GetCellSize(50), EPSILON, "범위 갱신 중에는 적용하지 않는다");
+            AssertDisplayMatchesViewport(log, "deferred");
+
+            yield return null;
+
+            // 다른 증분 변경처럼 범위 갱신 뒤 앵커 보존 리로드(FirstVisible)로 다시 읽는다.
+            Assert.AreEqual(180f, Scroller.GetCellSize(50), EPSILON);
+            Assert.AreEqual(5000f, Scroller.ScrollPosition, EPSILON);
+            AssertMatchesData("after deferred reload");
+            AssertDisplayMatchesViewport(log, "after deferred reload");
+        }
+
+        [Test]
+        public void RefreshAndReload_AfterWarmup_DoesNotAllocate()
+        {
+            Create(400, 50f, ids: true);
+            Scroller.LookAheadAfter = 100f;
+            Scroller.ScrollPosition = 5000f;
+
+            // 연산 목록·풀·작업 목록 용량을 채운다.
+            RefreshReloadCycle();
+            RefreshReloadCycle();
+
+            Assert.That(() => RefreshReloadCycle(), UnityEngine.TestTools.Constraints.Is.Not.AllocatingGCMemory());
+            AssertMatchesData("after cycles");
+        }
+
+        /// <summary>배치 밖 갱신(활성·비활성·전체), 보이는 항목·위 항목 다시 받기, 갱신을 모은 뒤 삽입·삭제로 옮기는 배치, 갱신만 있는 배치. 끝나면 데이터는 처음과 같다.</summary>
+        private void RefreshReloadCycle()
+        {
+            Scroller.RefreshCells(100, 5, 1);
+            Scroller.RefreshCells(300, 5, 2);
+            Scroller.RefreshActiveCellViews(4);
+            Scroller.ReloadCellView(101);
+            Scroller.ReloadCellView(20);
+
+            Scroller.BeginUpdates();
+            Scroller.RefreshCells(100, 3, 8);
+            _data.Insert(10, -1, 50f);
+            Scroller.InsertCells(10, 1);
+            Scroller.ReloadCellView(102);
+            Scroller.RefreshCells(103, 2, 16);
+            _data.RemoveRange(10, 1);
+            Scroller.RemoveCells(10, 1);
+            Scroller.EndUpdates();
+
+            Scroller.BeginUpdates();
+            Scroller.RefreshCells(99, 4, 32);
+            Scroller.RefreshActiveCellViews(64);
+            Scroller.EndUpdates();
+        }
+
+        /// <summary>지금 활성 셀 목록 (슬롯 순서).</summary>
+        private TestCellView[] ActiveCellsSnapshot()
+        {
+            IReadOnlyList<CyScrollerCellView> active = Scroller.ActiveCellViews;
+            var cells = new TestCellView[active.Count];
+            for (int i = 0; i < cells.Length; i++)
+            {
+                cells[i] = (TestCellView)active[i];
+            }
+
+            return cells;
+        }
+
+        private static int[] BindVersions(TestCellView[] cells)
+        {
+            var versions = new int[cells.Length];
+            for (int i = 0; i < cells.Length; i++)
+            {
+                versions[i] = cells[i].BindVersion;
+            }
+
+            return versions;
+        }
+
+        private static void AssertMaskedRefreshes(TestCellView[] cells, int[] expected, string context)
+        {
+            Assert.AreEqual(expected.Length, cells.Length, $"{context}: 셀 수");
+            for (int i = 0; i < cells.Length; i++)
+            {
+                Assert.AreEqual(expected[i], cells[i].MaskedRefreshCount, $"{context}: {i}번째 셀(데이터 {cells[i].DataIndex}) 내용 갱신 횟수");
+            }
+        }
+
+        private int CountActiveCopies(int dataIndex)
+        {
+            int copies = 0;
+            IReadOnlyList<CyScrollerCellView> active = Scroller.ActiveCellViews;
+            for (int i = 0; i < active.Count; i++)
+            {
+                if (active[i].DataIndex == dataIndex)
+                {
+                    copies++;
+                }
+            }
+
+            return copies;
+        }
+
+        /// <summary>dataIndex의 활성 사본 셀이 모두 count번 받았고 마지막 값이 mask인지 (count가 0이면 받지 않았는지).</summary>
+        private void AssertCopiesRefreshed(int dataIndex, int count, int mask, string context)
+        {
+            IReadOnlyList<CyScrollerCellView> active = Scroller.ActiveCellViews;
+            for (int i = 0; i < active.Count; i++)
+            {
+                var view = (TestCellView)active[i];
+                if (view.DataIndex != dataIndex)
+                {
+                    continue;
+                }
+
+                Assert.AreEqual(count, view.MaskedRefreshCount, $"{context}: 슬롯 {view.CellIndex} 내용 갱신 횟수");
+                if (count > 0)
+                {
+                    Assert.AreEqual(mask, view.LastChangeMask, $"{context}: 슬롯 {view.CellIndex} changeMask");
+                }
+            }
         }
 
         #endregion

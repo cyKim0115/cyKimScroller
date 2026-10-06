@@ -319,6 +319,60 @@ namespace CyKim.Scroller.Tests
         }
 
         /// <summary>
+        /// 다시 받을 항목의 크기 지우기(InvalidateSize): 자리와 다른 크기는 그대로이고, 삽입·삭제와 섞어도 지운 자리가 같이 옮겨지며,
+        /// 다시 채운 뒤 Build하면 처음부터 Build한 결과와 비트 단위로 같다 (맨 앞·가운데·끝, 크기가 그대로인 경우 포함).
+        /// </summary>
+        [Test]
+        public void InvalidateSize_KeepsPlace_AndRebuildMatchesFreshBuild()
+        {
+            var layout = new CyScrollerLayout();
+            var model = new List<float> { 10f, 20.5f, 30.25f, 40f, 12.75f, 8f };
+            layout.SetDataCount(model.Count);
+            for (int i = 0; i < model.Count; i++)
+            {
+                layout.SetSize(i, model[i]);
+            }
+
+            layout.Build(1.5f, EDIT_PADDING_BEFORE, EDIT_PADDING_AFTER, false, 200f);
+
+            // 가운데: 자리는 그대로이고 그 자리만 받지 않은 크기다.
+            layout.InvalidateSize(2);
+            Assert.AreEqual(model.Count, layout.DataCount);
+            for (int i = 0; i < model.Count; i++)
+            {
+                Assert.AreEqual(i == 2, layout.IsSizeUnset(i), $"unset {i}");
+            }
+
+            layout.SetSize(2, 55.5f);
+            model[2] = 55.5f;
+            layout.Build(1.5f, EDIT_PADDING_BEFORE, EDIT_PADDING_AFTER, false, 200f);
+            AssertMatchesFreshBuild(layout, model, 1.5f, false, 200f, "middle");
+
+            // 맨 앞(크기 그대로)과 끝을 지운 뒤 앞에 삽입하고 가운데를 지우면, 지운 자리가 같이 옮겨진다.
+            layout.InvalidateSize(0);
+            layout.InvalidateSize(model.Count - 1);
+            layout.InsertSizes(0, 1);
+            layout.RemoveSizes(3, 1);
+            model.Insert(0, float.NaN);
+            model.RemoveAt(3);
+            model[1] = float.NaN;
+            model[model.Count - 1] = float.NaN;
+            for (int i = 0; i < model.Count; i++)
+            {
+                Assert.AreEqual(float.IsNaN(model[i]), layout.IsSizeUnset(i), $"moved unset {i}");
+            }
+
+            layout.SetSize(0, 7f);
+            layout.SetSize(1, 10f);
+            layout.SetSize(model.Count - 1, 3.25f);
+            model[0] = 7f;
+            model[1] = 10f;
+            model[model.Count - 1] = 3.25f;
+            layout.Build(1.5f, EDIT_PADDING_BEFORE, EDIT_PADDING_AFTER, false, 200f);
+            AssertMatchesFreshBuild(layout, model, 1.5f, false, 200f, "edges with insert/remove");
+        }
+
+        /// <summary>
         /// 고정 시드로 크기 배열 삽입·삭제·이동(끝 삭제·끝에 붙이기 포함)을 섞은 배치를 적용하고(삽입한 자리는 배치 끝에 채움), 바뀐 자리부터 다시 더한 Build 결과가
         /// 같은 크기로 처음부터 Build한 결과와 비트 단위로 같은지 비교한다. 간격 변경·루프·빈 버퍼에서 늘어나는 경로와
         /// 개수만큼 딱 맞는 새 버퍼(첫 로드처럼)에서 늘어나는 경로도 섞는다.
