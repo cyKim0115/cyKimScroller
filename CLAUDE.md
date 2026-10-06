@@ -46,6 +46,8 @@ Assets/Dev/                         개발·검증 씬 (패키지에 포함 안 
 - 에디터가 백그라운드면 플레이 프레임이 멈춘다. 런타임에서 `Application.runInBackground = true` (프로젝트 설정은 바꾸지 않는다)
 - PlayMode 테스트를 돌리면 저장 안 한 열린 씬이 교체된다. 임시 씬 작업은 테스트 전에 끝낸다
 - PlayMode를 연달아 돌리면 0개로 끝날 수 있다 (Enter Play Mode Options와 Test Framework 정적 캐시). 매 실행 전 `refresh_unity(compile="request", mode="force")`
+- README 이미지 재캡처: Basic 샘플 Import → 빈 씬에 `BasicSample` → Play → `execute_code`로 `ReadmeCaptureHarness.Begin(캔버스 "CyScroller Sample Canvas", 출력 폴더, "버튼 라벨|초" 배열, 1920, 1080, 1280, 720, 20f, 1.5f)`.
+  `still.png` → `docs/images/overview.png`(1280 폭), `frames/` → ffmpeg 팔레트 GIF(960 폭, 128색) `docs/images/demo.gif`. 끝나면 샘플·임시 씬 정리
 
 ## 상시 규칙
 
