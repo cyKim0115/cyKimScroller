@@ -95,10 +95,10 @@ namespace CyKim.Scroller
         }
 
         /// <summary>
-        /// 항목 ID의 지금 데이터 인덱스. 마지막으로 델리게이트를 다시 받을 때 채운 사전에서 찾는다 (O(1), 할당 없음).
+        /// 항목 ID의 지금 데이터 인덱스. 델리게이트를 다시 받거나 증분 변경(<see cref="InsertCells"/> 등)을 적용할 때 맞춘 사전에서 찾는다 (O(1), 할당 없음).
         /// 없거나 델리게이트가 <see cref="ICyScrollerItemIdProvider"/>를 구현하지 않으면 −1. 같은 ID가 여럿이면 앞 인덱스.
         /// </summary>
-        /// <remarks>데이터를 바꾼 뒤 아직 다시 읽지 않았으면 이전 데이터 기준 인덱스다.</remarks>
+        /// <remarks>데이터를 바꾼 뒤 아직 다시 읽거나 알리지 않았으면(증분 변경 배치 중 포함) 이전 데이터 기준 인덱스다.</remarks>
         public int FindDataIndexForItemId(long itemId)
         {
             if (!_hasItemIds)

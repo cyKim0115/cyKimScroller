@@ -48,8 +48,9 @@ namespace CyKim.Scroller
         /// <summary>
         /// 바인딩 세대. 스크롤러가 이 뷰를 데이터에 바인딩할 때(<see cref="CyScroller.GetCellView"/>가 활성화할 슬롯용으로 내줄 때)와
         /// 바인딩을 풀 때(풀로 돌려보낼 때, <see cref="CyScroller.ClearActive"/>로 파괴할 때, 활성인 채로 스크롤러와 함께 파괴될 때) 1씩 는다.
-        /// 같은 데이터로 남는 갱신(<see cref="RefreshCellView"/>, 루프 순환 보정)에는 늘지 않는다.
-        /// 스크롤러를 거치지 않고 셀을 직접 파괴하면 늘지 않는다.
+        /// 같은 데이터로 남는 갱신(<see cref="RefreshCellView()"/>·<see cref="RefreshCellView(int)"/>, 루프 순환 보정, 증분 변경·키 유지 리로드(<see cref="CyScroller.PreserveCellsById"/>)로
+        /// 인덱스만 바뀔 때(<see cref="OnDataIndexChanged"/>))에는 늘지 않는다.
+        /// <see cref="CyScroller.ReloadCellView"/>는 회수한 뒤 다시 바인딩하므로 는다. 스크롤러를 거치지 않고 셀을 직접 파괴하면 늘지 않는다.
         /// </summary>
         /// <example>
         /// 비동기 로드는 시작할 때 값을 기억해 두고, 끝났을 때 값이 다르면(그사이 재활용·재바인딩되거나 스크롤러와 함께 파괴됨) 결과를 버린다.
@@ -94,13 +95,41 @@ namespace CyKim.Scroller
             }
         }
 
-        /// <summary><see cref="CyScroller.RefreshActiveCellViews"/>가 활성 셀마다 호출한다. 다시 바인딩할 때 쓴다.</summary>
+        /// <summary>
+        /// <see cref="CyScroller.RefreshActiveCellViews()"/>가 활성 셀마다 호출한다. 같은 데이터의 바뀐 내용을 다시 그릴 때 쓴다.
+        /// <see cref="RefreshCellView(int)"/>의 기본 구현도 이 메서드를 부른다.
+        /// </summary>
         public virtual void RefreshCellView()
         {
         }
 
+        /// <summary>
+        /// <see cref="CyScroller.RefreshCells"/>·<see cref="CyScroller.RefreshActiveCellViews(int)"/>가 내용이 바뀐 항목의 활성 셀에 호출한다 (다시 바인딩하지 않는다).
+        /// 기본 구현은 <see cref="RefreshCellView()"/>를 부른다. 바뀐 부분만 다시 그리려면 재정의한다.
+        /// </summary>
+        /// <param name="changeMask">
+        /// 무엇이 바뀌었는지 알리는 사용자 정의 비트 플래그 (예: 1 = 텍스트, 2 = 아이콘). 스크롤러는 뜻을 해석하지 않고 그대로 전달한다.
+        /// 배치 안에서 같은 항목에 여러 번 알린 값은 OR로 합쳐 한 번에 온다. 0은 오지 않는다.
+        /// </param>
+        /// <remarks>
+        /// 이 메서드만 재정의해도 무인자 <see cref="CyScroller.RefreshActiveCellViews()"/>는 <see cref="RefreshCellView()"/>를 부른다.
+        /// 둘 다 같은 경로로 받으려면 <see cref="RefreshCellView()"/>를 <c>RefreshCellView(~0)</c>을 부르게 재정의한다 (이때 이 메서드의 재정의에서는 base를 부르지 않는다. 서로 부르며 끝나지 않는다).
+        /// </remarks>
+        public virtual void RefreshCellView(int changeMask) => RefreshCellView();
+
         /// <summary>풀로 돌아가기 직전에 호출된다. 이전 데이터 상태를 정리할 때 쓴다.</summary>
         public virtual void OnRecycled()
+        {
+        }
+
+        /// <summary>
+        /// 증분 변경(<see cref="CyScroller.InsertCells"/>·<see cref="CyScroller.RemoveCells"/>·<see cref="CyScroller.MoveCell"/>)이나
+        /// 키 유지 리로드(<see cref="CyScroller.PreserveCellsById"/>)로 다시 바인딩하지 않고 같은 항목의 인덱스만 바뀌었을 때.
+        /// <see cref="DataIndex"/>·<see cref="CellIndex"/>는 이미 새 값이고 <see cref="BindVersion"/>은 그대로다.
+        /// 이 호출 뒤에 새 위치(와 새 크기)로 옮겨진다. 인덱스를 화면에 그리는 셀은 여기서 다시 그린다.
+        /// </summary>
+        /// <param name="previousDataIndex">바뀌기 전 데이터 인덱스.</param>
+        protected internal virtual void OnDataIndexChanged(int previousDataIndex)
         {
         }
 

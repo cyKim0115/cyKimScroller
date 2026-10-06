@@ -22,7 +22,7 @@
   "samples": [
     {
       "displayName": "Basic",
-      "description": "Vertical list with variable cell heights, a horizontal looping carousel and a looping wheel picker that snap to the center and style their cells with the viewport position hook, and jump buttons. Builds its UI at runtime, so it only needs an empty scene.",
+      "description": "Vertical list with variable cell heights, a horizontal looping carousel and a looping wheel picker that snap to the center and style their cells with the viewport position hook, jump buttons, and edit buttons that insert, remove and move list items with incremental updates while keeping the view in place. Builds its UI at runtime, so it only needs an empty scene.",
       "path": "Samples~/Basic"
     }
   ]

@@ -11,6 +11,11 @@ uGUI `ScrollRect` 위에서 동작하는 가상화 스크롤러. 보이는 구�
 - 스냅 (드래그·휠 후, 누르고 있는 동안은 대기), 속도 상한, 스크롤바 표시 모드
 - 셀 훅: 실제 뷰포트 기준 표시 이벤트(lookAhead 구간 제외, 스크롤러 자체가 파괴될 때 말고는 항상 짝), 늦은 비동기 결과를 버리는 `BindVersion`, 캐러셀·휠 피커 연출용 뷰포트 위치 훅
 - 안정 항목 ID와 위치 앵커: 앞쪽에 항목이 삽입·삭제돼도 보던 항목을 지키는 리로드, 아래쪽 기준(채팅) 리로드, 항목 기준 위치 저장·복원(데이터·뷰포트가 준비되기 전 요청은 보관)
+- 증분 구조 변경: `InsertCells`·`RemoveCells`·`MoveCell`(`BeginUpdates`/`EndUpdates`로 묶기)은 전체를 다시 읽지 않고 바뀐 자리만 반영한다.
+  남은 셀은 다시 바인딩하지 않고, 보던 화면·진행 중인 트윈·드래그를 지킨다
+- 부분 갱신: 내용만 바뀐 항목은 `RefreshCells`(사용자 정의 changeMask, 배치 안에서는 OR로 모아 한 번)로 그 항목의 활성 셀만 다시 그리고,
+  크기·셀 종류가 바뀐 항목은 `ReloadCellView`로 그 항목만 다시 받는다
+- 키 유지 리로드(`PreserveCellsById`, 옵트인): 바뀐 자리를 모를 때 위치를 지키며 다시 읽어도 항목 ID가 같은 셀은 다시 바인딩하지 않고 새 자리로 옮긴다
 - 스크롤 핫패스 GC 할당 0 (PlayMode 테스트로 검증, 셀 훅을 켠 상태 포함)
 
 Unity 6000.0 이상, uGUI 2.0 이상 (6000.6.0f1 / uGUI 2.6.0에서 검증).
@@ -67,9 +72,12 @@ public class InventoryList : MonoBehaviour, ICyScrollerDelegate
 ```
 
 데이터가 바뀌면 `ReloadData()` (처음으로) 또는 `ReloadDataKeepingPosition()` (맨 앞 셀 유지)을 호출한다.
+어느 자리가 삽입·삭제·이동됐는지 알면 `InsertCells`·`RemoveCells`·`MoveCell`이 그 자리만 반영한다 (아래 [증분 변경](#증분-변경)).
 앞쪽에 항목이 삽입·삭제돼도 같은 항목을 지키려면 델리게이트에 `ICyScrollerItemIdProvider`도 구현한다 (아래 [항목 ID와 위치 앵커](#항목-id와-위치-앵커)).
+여기에 `PreserveCellsById`를 켜면 위치를 지키는 리로드가 ID가 같은 셀을 다시 바인딩하지 않는다 (아래 [키 유지 리로드](#키-유지-리로드)).
 크기는 그대로이고 보이는 셀 내용만 바뀌었으면 `RefreshActiveCellViews()`가 가장 싸다.
 단 이 메서드는 활성 셀마다 `RefreshCellView()`를 부르기만 하므로, 셀 뷰가 이를 재정의해 자기 데이터로 다시 그려야 한다.
+어느 항목이 바뀌었는지 알면 `RefreshCells(dataIndex, count, changeMask)`가 그 항목의 활성 셀에만 부른다 (아래 [부분 갱신](#부분-갱신)).
 
 ```csharp
 public class ItemCellView : CyScrollerCellView
@@ -88,8 +96,10 @@ public class ItemCellView : CyScrollerCellView
 
 | 분류 | 멤버 |
 |---|---|
-| 데이터 | `Delegate`, `ReloadData()`, `ReloadData(factor)`, `ReloadData(ReloadAnchor, factor)`, `ReloadData(in CyScrollerAnchor)`, `ReloadDataKeepingPosition()`, `RefreshActiveCellViews()`, `GetCellView(prefab)` |
-| 항목 ID·앵커 | `ICyScrollerItemIdProvider.GetItemId`, `FindDataIndexForItemId(itemId)`, `CaptureAnchor(trailing)`, `RestoreAnchor(in anchor)`, `CyScrollerAnchor`, `ReloadAnchor`(Factor·Start·End·FirstVisible·LastVisible) |
+| 데이터 | `Delegate`, `ReloadData()`, `ReloadData(factor)`, `ReloadData(ReloadAnchor, factor)`, `ReloadData(in CyScrollerAnchor)`, `ReloadDataKeepingPosition()`, `RefreshActiveCellViews()`, `RefreshActiveCellViews(changeMask)`, `GetCellView(prefab)` |
+| 항목 ID·앵커 | `ICyScrollerItemIdProvider.GetItemId`, `FindDataIndexForItemId(itemId)`, `CaptureAnchor(trailing)`, `RestoreAnchor(in anchor)`, `CyScrollerAnchor`, `ReloadAnchor`(Factor·Start·End·FirstVisible·LastVisible), `PreserveCellsById`(키 유지 리로드) |
+| 증분 변경 | `InsertCells(dataIndex, count)`, `RemoveCells(dataIndex, count)`, `MoveCell(fromDataIndex, toDataIndex)`, `BeginUpdates()`, `EndUpdates()` |
+| 부분 갱신 | `RefreshCells(dataIndex, count, changeMask)`, `ReloadCellView(dataIndex)`, `RefreshActiveCellViews(changeMask)` |
 | 이동 | `JumpToDataIndex(dataIndex, scrollerOffset, cellOffset, useSpacing, tweenType, tweenTime, onComplete, loopJumpDirection)`, `ScrollIntoView(dataIndex, align, margin, tweenType, tweenTime, onComplete, loopJumpDirection)`, `Snap()`, `InterruptTween()`, `GetJumpTargetPosition(...)` |
 | 위치 | `ScrollPosition`, `NormalizedScrollPosition`, `ScrollSize`, `ScrollRectSize`, `ContentSize`, `Velocity`, `LinearVelocity` |
 | 범위 | `NumberOfCells`, `NumberOfCellSlots`, `StartDataIndex`/`EndDataIndex`, `StartCellViewIndex`/`EndCellViewIndex`, `ActiveCellViews`, `GetCellViewAtDataIndex`, `GetCellViewAtCellIndex`, `IsDataIndexFullyVisible(dataIndex, margin)` |
@@ -98,7 +108,7 @@ public class ItemCellView : CyScrollerCellView
 | 정리 | `ClearActive()`, `ClearRecycled()`, `ClearAll()`, `GetRecycledCellCount()` |
 | 이벤트 | `CellViewVisibilityChanged`, `CellViewWillDisplay`, `CellViewDidEndDisplay`, `CellViewPositionChanged`, `CellViewInstantiated`, `CellViewReused`, `CellViewWillRecycle`, `ScrollerScrolled`, `ScrollerSnapped`, `ScrollerScrollingChanged`, `ScrollerTweeningChanged` |
 | 위치 훅 | `NotifyCellPositions`, `CellPositionPivot` |
-| 셀 뷰 | `DataIndex`, `CellIndex`, `ItemId`, `HasItemId`, `Active`, `IsBound`, `IsDisplayed`, `BindVersion`, `RefreshCellView()`, `OnRecycled()`, `OnBecameVisible()`, `OnBecameHidden()`, `OnViewportPositionChanged(normalizedOffset)` |
+| 셀 뷰 | `DataIndex`, `CellIndex`, `ItemId`, `HasItemId`, `Active`, `IsBound`, `IsDisplayed`, `BindVersion`, `RefreshCellView()`, `RefreshCellView(changeMask)`, `OnRecycled()`, `OnBecameVisible()`, `OnBecameHidden()`, `OnViewportPositionChanged(normalizedOffset)`, `OnDataIndexChanged(previousDataIndex)` |
 
 `scrollerOffset` / `cellOffset`은 0 = 앞(위·왼쪽), 0.5 = 가운데, 1 = 뒤. 가운데 정렬은 `JumpToDataIndex(i, 0.5f, 0.5f)`.
 
@@ -174,11 +184,128 @@ _scroller.RestoreAnchor(saved);
 `CaptureAnchor()`는 뷰포트 맨 앞에 걸친 항목과 셀 시작 → 뷰포트 시작 거리를, `CaptureAnchor(true)`는 뷰포트 맨 뒤에 걸친 항목과 뷰포트 끝 → 셀 끝 거리를 적는다.
 `ReloadDataKeepingPosition()`은 셀만 다시 배치하므로 진행 중인 트윈·점프 정렬을 이어 가고, `ReloadData(ReloadAnchor.FirstVisible)`·`LastVisible`은 전체 리로드(트윈·정렬 정지)에 앵커 복원을 더한 것이다.
 
+### 증분 변경
+
+어느 자리가 바뀌었는지 알면 전체를 다시 읽지 않고 그 자리만 알린다. **데이터를 먼저 바꾼 뒤** 부른다.
+삽입한 항목만 크기(와 항목 ID)를 묻고, 남은 셀은 다시 바인딩하지 않으며, 뷰포트 맨 앞 항목보다 앞에서 생긴 변화만큼 스크롤 위치를 옮겨 화면이 움직이지 않는다.
+
+```csharp
+// 한 연산은 바로 적용된다. 호출 시점의 GetNumberOfCells는 이 연산까지 반영돼 있어야 한다.
+_messages.InsertRange(0, older);
+_scroller.InsertCells(0, older.Count);   // 보던 메시지가 같은 자리에 남는다
+
+// 여러 연산은 묶어서 한 번에 적용한다. 각 연산의 인덱스는 앞 연산까지 반영한 기준이다.
+// BeginUpdates는 반드시 EndUpdates와 짝을 맞춘다. 사이 코드가 예외를 던져도 배치가 닫히도록 finally에서 부른다.
+_scroller.BeginUpdates();
+try
+{
+    _items.RemoveAt(3);
+    _scroller.RemoveCells(3, 1);
+    _items.Insert(0, pinned);
+    _scroller.InsertCells(0, 1);
+    Item moved = _items[10];             // 10번을 빼서 2번 자리에 넣는다
+    _items.RemoveAt(10);
+    _items.Insert(2, moved);
+    _scroller.MoveCell(10, 2);
+}
+finally
+{
+    _scroller.EndUpdates();              // 여기서 GetNumberOfCells가 최종 개수와 맞으면 된다
+}
+```
+
+배치가 닫히지 않으면 범위 갱신·리로드·재배치가 계속 미뤄져 스크롤해도 셀이 갱신되지 않는다(프레임을 넘겨 열려 있으면 경고를 한 번 남긴다).
+예외로 연산을 다 알리지 못한 채 닫혀도 `EndUpdates`가 개수 불일치를 경고하고 `ReloadData(ReloadAnchor.FirstVisible)`로 데이터와 다시 맞춘다(개수가 그대로인 변경은 알아채지 못한다).
+
+**UIKit에서 옮길 때 인덱스 해석이 다르다.** `performBatchUpdates`(`beginUpdates`/`endUpdates`)는 호출 순서와 상관없이 삭제·이동 출발점을 배치 전 인덱스로,
+삽입·이동 도착점을 배치 후 인덱스로 해석한다. CyScroller는 RecyclerView의 `notifyItem*`처럼 호출 순서대로, 앞 연산까지 반영한 인덱스를 쓴다.
+같은 결과를 내려면 삭제를 큰 인덱스부터 먼저 부르고, 그다음 삽입을 (배치 후 기준) 작은 인덱스부터 부른다. 이동이 섞이면 `MoveCell`의 두 인덱스를 그 시점 기준으로 바꿔 넘긴다.
+예를 들어 UIKit의 `insertRows([0])` + `deleteRows([3])`(배치 전 3번 삭제)는 `RemoveCells(3, 1)` → `InsertCells(0, 1)` 순서다.
+`InsertCells(0, 1)` → `RemoveCells(3, 1)`로 부르면 개수는 맞아 경고 없이 배치 전 2번이 지워진다.
+
+인덱스만 바뀐 셀은 `OnDataIndexChanged(previousDataIndex)`를 받는다(`BindVersion`은 그대로). 셀이 인덱스(순번 등)를 그린다면 여기서 다시 그린다.
+삭제된 항목의 셀은 회수하고(보이던 셀은 `CellViewDidEndDisplay`를 먼저), 새로 보이는 자리만 델리게이트로 받는다.
+뷰포트 맨 앞 항목을 지우거나 `MoveCell`로 다른 자리로 옮기면 화면은 그 항목을 따라가지 않고 그 자리에 온 다음 항목이 같은 거리에 온다(아래 [증분 변경 동작](#증분-변경-동작)).
+
+### 부분 갱신
+
+개수는 그대로이고 일부 항목의 내용만 바뀌었으면 그 항목만 알린다. 증분 변경처럼 **데이터를 먼저 바꾼 뒤** 부르고, 같은 배치에 섞을 수 있다.
+
+```csharp
+// 7번부터 3개 항목의 텍스트만 바뀌었다. 그 항목의 활성 셀만 RefreshCellView(changeMask)를 받는다 (다시 바인딩·크기 질의 없음).
+_scroller.RefreshCells(7, 3, MessageCellView.TEXT);
+
+// 12번 메시지가 이미지 메시지가 되어 셀 종류와 크기가 바뀌었다. 그 항목만 크기를 다시 묻고 셀을 다시 받는다.
+_scroller.ReloadCellView(12);
+```
+
+셀 뷰는 `RefreshCellView(int changeMask)`를 재정의해 바뀐 부분만 다시 그린다. `changeMask`는 스크롤러가 해석하지 않는 사용자 정의 비트 플래그이고,
+기본 구현은 `RefreshCellView()`를 부른다.
+
+```csharp
+public class MessageCellView : CyScrollerCellView
+{
+    public const int TEXT = 1;
+    public const int ICON = 2;
+
+    // 무인자 RefreshActiveCellViews()도 같은 경로로 받는다.
+    public override void RefreshCellView() => RefreshCellView(~0);
+
+    // base를 부르지 않는다 (기본 구현은 RefreshCellView()를 불러 서로 부르며 끝나지 않는다).
+    public override void RefreshCellView(int changeMask)
+    {
+        if ((changeMask & TEXT) != 0) { /* 텍스트 */ }
+        if ((changeMask & ICON) != 0) { /* 아이콘 */ }
+    }
+}
+```
+
+- `RefreshCells`는 활성 셀(루프 모드면 같은 데이터의 사본 셀마다)에만 부른다. 활성 범위 밖 항목은 나중에 활성화될 때 최신 데이터로 바인딩된다.
+- 배치 안에서는 항목마다 changeMask를 OR로 모아 `EndUpdates`에서 남은 셀마다 한 번 부르고, 뒤따른 삽입·삭제·이동으로 인덱스가 옮겨지면 같은 항목을 따라간다.
+  지워진 항목과 배치 끝에 새로 바인딩되는 셀은 이미 최신 데이터이므로 부르지 않는다. 갱신만 있는 배치는 루프 모드나 셀 이벤트 콜백 안에서도 리로드하지 않는다.
+- `ReloadCellView`는 그 항목만 크기(와 항목 ID)를 다시 묻고 활성 셀을 회수한 뒤 델리게이트로 다시 받는다(`BindVersion` 증가, 보이던 셀은 표시 끝 → 표시 시작).
+  크기가 바뀌면 삽입처럼 보던 화면을 지킨다. 활성 셀이 없으면 크기(와 ID)만 갱신한다.
+- `RefreshActiveCellViews(changeMask)`는 모든 항목에 `RefreshCells`를 부른 것과 같다. 무인자 `RefreshActiveCellViews()`는 지금처럼 활성 셀마다 `RefreshCellView()`를 바로 부른다.
+
+### 키 유지 리로드
+
+바뀐 자리를 모르고 목록을 통째로 다시 받는 경우(서버 응답으로 목록 교체 등)에도, 델리게이트가 항목 ID를 주고 `PreserveCellsById`를 켜면(기본 꺼짐, 인스펙터 **Reload → Preserve Cells By Id**)
+위치를 지키는 리로드가 ID가 같은 셀을 다시 바인딩하지 않고 새 자리로 옮긴다. 이미 불러 둔 이미지·진행 중인 연출이 남고, 지워진 항목의 셀만 회수하고 새 항목만 바인딩한다.
+
+```csharp
+private void Awake()
+{
+    _scroller.PreserveCellsById = true;   // 인스펙터에서 켜도 된다
+}
+
+private void OnListArrived(List<Message> latest)
+{
+    _messages.Clear();
+    _messages.AddRange(latest);                        // 같은 메시지는 같은 Id (GetItemId)
+    _scroller.ReloadData(ReloadAnchor.FirstVisible);   // 남은 메시지의 셀은 그대로 옮기고 새 메시지만 바인딩한다
+
+    // 키 유지 리로드는 내용 변경을 감지하지 않는다. 내용이 바뀐 항목은 리로드한 뒤 새 인덱스로 알린다.
+    for (int i = 0; i < _messages.Count; i++)
+    {
+        if (_messages[i].IsEdited)
+        {
+            _scroller.RefreshCells(i, 1, MessageCellView.TEXT);
+        }
+    }
+}
+```
+
+- 키 유지를 따르는 리로드는 위치를 지키며 다시 읽는 `ReloadData(ReloadAnchor.FirstVisible / LastVisible)`·`ReloadData(in anchor)`·`ReloadDataKeepingPosition()`뿐이다.
+  `ReloadData()`·`ReloadData(factor)`·Start·End처럼 처음부터 다시 그리는 리로드는 옵션과 무관하게 모든 셀을 다시 바인딩한다.
+- 옮긴 셀은 인덱스가 바뀌면 `OnDataIndexChanged`를 받고 `BindVersion`은 그대로이며, 계속 보이면 표시 이벤트가 없다. 크기는 새로 받은 값으로 배치한다.
+- 같은 ID는 같은 셀 종류로 보고 그 셀을 그대로 쓴다. 셀 종류가 바뀐 항목은 리로드한 뒤 `ReloadCellView`를 부른다.
+- 바뀐 자리를 알면 `InsertCells`·`RemoveCells`·`MoveCell`이 더 싸다(크기·ID도 바뀐 자리만 묻는다). 자세한 규칙은 아래 [증분 변경 동작](#증분-변경-동작).
+
 ## 동작 규칙
 
 - **content를 스크롤러가 소유한다.** 앵커·피벗·크기를 실행 시 다시 설정하고, content의 `LayoutGroup`·`ContentSizeFitter`는 끈다.
 - **셀 루트 RectTransform은 스크롤러가 배치한다.** 스케일·회전 같은 효과는 자식에 준다.
-- 셀 크기는 `GetCellViewSize`가 정한다. 셀이 스스로 크기를 바꾸면 `ReloadDataKeepingPosition()`으로 다시 계산한다.
+- 셀 크기는 `GetCellViewSize`가 정한다. 셀이 스스로 크기를 바꾸면 `ReloadDataKeepingPosition()`(한 항목이면 `ReloadCellView(dataIndex)`)으로 다시 계산한다.
 - 점프·스냅·`ScrollIntoView` 뒤 정렬은 사용자가 드래그·휠·스크롤바로 움직이거나 `ScrollPosition`을 직접 바꾸기 전까지 유지된다
   (첫 프레임 Canvas 크기 확정, 화면 회전에도 같은 셀이 같은 자리에 있다).
 - 트윈은 목표 좌표를 저장하지 않고 요청(셀·정렬 위치·여백)으로 매 프레임 지금 배치에서 다시 계산한다.
@@ -218,6 +345,7 @@ _scroller.RestoreAnchor(saved);
   FirstVisible·LastVisible 리로드는 보관한 앵커를 쓴다. 드래그·휠은 버리지 않고, 그 뒤 자동 스냅은 보관하는 동안 기다린다.
   보관한 앵커를 나중에 적용할 때도 `RestoreAnchor`처럼 남은 관성과 스냅 대기를 멈춘다(빈 목록을 튕긴 관성이 복원한 자리를 옮기지 않게).
   그래서 `ReloadData()`는 보관한 앵커를 적용하고 `ReloadData(0f)`는 버린다. 보관하는 동안 `CaptureAnchor`는 보관한 앵커를 그대로 돌려준다.
+- 증분 변경(`InsertCells`·`RemoveCells`·`MoveCell`)·부분 갱신(`RefreshCells`·`ReloadCellView`)·키 유지 리로드(`PreserveCellsById`)의 계약과 동작은 아래 [증분 변경 동작](#증분-변경-동작)에 모았다.
 - LastVisible은 뷰포트 끝에 걸친 항목의 끝을 같은 자리에 둔다. 끝에 붙어 있을 때 마지막 항목이 커져도 끝에 남지만, 뒤에 항목이 붙으면 보던 항목을 지키고 새 항목은 그 아래에 붙는다.
   새 항목을 따라가려면 다시 읽기 전에 끝에 있었는지 보고 `ReloadData(ReloadAnchor.End)`를 쓴다.
 - 루프 모드에서는 스크롤 축 스크롤바를 ScrollRect에서 떼어 숨기고, 루프를 끄면 다시 붙인다.
@@ -225,7 +353,64 @@ _scroller.RestoreAnchor(saved);
 - 루프는 뷰포트·미리보기 길이를 덮고도 양쪽에 한 사이클씩 남도록 세트 수(최소 5)를 정한다. 셀 크기가 모두 0이면 루프하지 않는다.
 - ScrollRect를 끄면(스크롤 잠금) CyScroller도 입력을 무시한다. 코드로 시작한 점프는 계속 진행된다.
 - `ActiveCellViews`는 `IReadOnlyList`다. GC를 피하려면 `foreach` 대신 `for` + 인덱서로 순회한다.
-- Profiler에서 `CyScroller.UpdateActiveRange`(활성 범위 갱신, 셀 바인딩 포함)와 `CyScroller.Relayout`(위치 유지 재배치) 마커로 비용을 확인할 수 있다.
+- Profiler에서 `CyScroller.UpdateActiveRange`(활성 범위 갱신, 셀 바인딩 포함), `CyScroller.Relayout`(위치 유지 재배치), `CyScroller.ApplyUpdates`(증분 변경 적용) 마커로 비용을 확인할 수 있다.
+
+### 증분 변경 동작
+
+구조 변경(`InsertCells`·`RemoveCells`·`MoveCell`), 부분 갱신(`RefreshCells`·`RefreshActiveCellViews(changeMask)`·`ReloadCellView`), 키 유지 리로드(`PreserveCellsById`)의 계약:
+
+1. **순차 의미론.** 연산은 호출한 순서대로 적용하고, 각 인덱스는 앞 연산까지 반영한 기준이다. RecyclerView `notifyItem*`과 같고 UIKit 배치와는 다르다(위 [증분 변경](#증분-변경)).
+2. **데이터를 먼저 바꾼 뒤 알린다.** 배치 밖에서 부른 연산은 그 자리에서 한 연산짜리 배치로 적용하므로 호출 시점의 `GetNumberOfCells`가 그 연산까지 반영해야 한다.
+   배치(`BeginUpdates`~`EndUpdates`) 안에서는 `EndUpdates` 때 최종 개수와 맞으면 된다.
+3. **개수가 맞지 않으면 다시 읽는다.** `EndUpdates`에서 연산을 반영한 개수가 `GetNumberOfCells`와 다르면(연산이 없는 배치 포함) 경고를 남기고 `ReloadData(ReloadAnchor.FirstVisible)`로 다시 읽는다.
+4. **루프 모드는 리로드로 바꾼다.** 같은 데이터가 여러 슬롯에 있으므로 삽입·삭제·이동·다시 받기는 증분 대신 같은 앵커 보존 리로드로 처리한다. 내용 갱신만 있는 배치는 리로드하지 않고 사본 셀마다 부른다.
+5. **재진입은 미룬다.** 델리게이트·셀 이벤트 콜백 안에서 부르거나 끝난 삽입·삭제·이동·다시 받기는 범위 갱신이 끝난 뒤 같은 앵커 보존 리로드로 처리한다(내용 갱신만 있으면 바로 부른다).
+   배치 중 들어온 `ReloadData`·`ReloadDataKeepingPosition`·재배치(`Spacing` 등)·`Clear*`는 `EndUpdates`에서 처리하고, 다시 읽는 요청이 있었으면 기록한 연산 대신 그 요청을 처리한다(위치 기준은 배치 전 화면).
+6. **트윈 대상이 지워지면 멈춘다.** 진행 중인 트윈·점프 정렬의 대상이 지워지면 트윈은 그 자리에서 멈추고 완료 콜백·`ScrollerSnapped`는 부르지 않는다(`ScrollerTweeningChanged(false)`는 온다). 옮겨진 대상은 따라간다.
+7. **키 유지 리로드는 내용 변경을 감지하지 않는다.** 항목 ID가 같은 셀은 다시 바인딩하지 않으므로 내용이 바뀐 항목은 리로드한 뒤 새 인덱스로 `RefreshCells`를, 셀 종류가 바뀐 항목은 `ReloadCellView`를 부른다.
+
+3·4의 리로드와 5에서 콜백 안 삽입·삭제·이동·다시 받기를 대신하는 리로드는 `PreserveCellsById`와 무관하게 모든 셀을 다시 바인딩한다(알리지 못한 변경과 기록한 내용 갱신까지 데이터와 맞춘다).
+5에서 배치·콜백 중 사용자가 직접 부른 위치 유지 리로드(FirstVisible·LastVisible·`ReloadData(in anchor)`·`ReloadDataKeepingPosition`)는 미뤄져도 키 유지를 따른다(배치에 구조 연산만 있으면 그 연산 대신 다시 읽으며 셀을 옮긴다).
+배치에 `RefreshCells`·`ReloadCellView`를 기록했거나 콜백 안에서 리로드를 기다리는 동안 알렸으면 그 리로드가 내용 갱신까지 대신 처리하므로 모두 다시 바인딩한다(위 대체 리로드와 겹쳐도 그렇다).
+
+- **위치 보존.** 뷰포트 맨 앞 항목보다 앞에서 생긴 크기 변화만큼 스크롤 위치를 옮긴다(드래그 중이면 손가락 기준점과 직전 위치도 같이 옮겨 드래그를 끊지 않는다).
+  맨 앞 항목 자리의 삽입은 그 항목 앞(뷰포트 위)에 들어가 화면은 그 항목을 지킨다.
+  맨 앞 항목이 지워지거나 `MoveCell`로 다른 자리로 옮겨지면 화면은 그 항목을 따라가지 않고 그 자리에 온 다음 항목이 같은 거리에 온다.
+  이동은 그 자리에서 지우고 새 자리에 삽입한 것과 같아서, 맨 앞 항목을 0번으로 올리면 그 크기만큼 보정되고 목록 맨 위로 튀지 않는다.
+  같은 배치에서 그 빈자리에 삽입한 항목은 자리를 채운다(맨 앞 항목을 지우고 같은 자리에 새 항목을 넣으면 새 항목이 그 자리에 보인다).
+  결과는 스크롤 범위로 자른다(드래그로 가장자리 너머로 당긴 거리는 남긴다). 진행 중인 트윈·점프 정렬과 보관한 앵커는 같은 항목을 향하게 인덱스를 옮긴다
+  (`MoveCell`로 옮겨진 항목도 따라가고, 트윈은 끊기지 않고 그 항목에 도착해 완료 콜백을 한 번 부른다). 대상이 지워지면 정렬은 풀린다.
+- **셀.** 남은 셀은 다시 바인딩하지 않는다(`BindVersion` 그대로). 인덱스가 바뀐 셀은 `OnDataIndexChanged` 뒤 새 위치로 옮기고, 계속 보이는 셀에는 표시 이벤트가 없다.
+  삭제된 항목의 셀은 회수하고(보이던 셀은 `CellViewDidEndDisplay`를 먼저), 새로 활성 범위에 들어온 자리만 델리게이트로 받는다.
+  한 번의 적용은 표시 끝 → 회수 → 인덱스 변경 알림·재배치 → 내용 갱신(배치에서 `RefreshCells`를 모은 셀) → 새 자리 바인딩 → 표시 시작 순서다.
+- **배치.** 배치(중첩 가능) 중에는 개수·좌표·활성 셀·항목 ID가 배치 전 상태로 남고, 범위 갱신과 델리게이트 호출을 배치 끝으로 미룬다(그 사이 스크롤해도 된다).
+  배치 중 점프·`ScrollIntoView`처럼 인덱스를 받는 이동은 배치 전 인덱스로 해석하고, 배치 끝에 다른 진행 중 이동처럼 같은 항목으로 옮긴다.
+  `BeginUpdates`는 반드시 `EndUpdates`와 짝을 맞춘다(사이 코드가 예외를 던질 수 있으면 `finally`에서). 닫히지 않은 배치는 위 작업을 계속 미루므로 스크롤해도 셀이 갱신되지 않고 `ReloadData`도 처리되지 않는다.
+  배치가 프레임을 넘겨 열려 있으면 LateUpdate에서 경고를 한 번 남긴다(배치마다 한 번). 늦게라도 `EndUpdates`를 부르면 그때 적용한다.
+- **범위 밖 인자는 자른다.** 삽입 위치는 [0, 개수], 삭제·갱신 구간은 [0, 개수) 안쪽만, 이동은 두 인덱스를 [0, 개수 − 1]로. `count`가 0 이하이거나 changeMask가 0이면 아무것도 하지 않고,
+  `ReloadCellView`는 [0, 개수) 밖 인덱스를 무시한다. `EndUpdates`를 `BeginUpdates`보다 많이 부르면 경고 후 무시한다. 로드 전에 부른 연산은 무시한다(첫 리로드가 전부 읽는다).
+- **부분 갱신.** `RefreshCells`는 레이아웃을 바꾸지 않고 활성 셀(루프 모드면 같은 데이터의 사본 셀마다)에만 `RefreshCellView(changeMask)`를 부른다(다시 바인딩하지 않으므로 `BindVersion` 그대로).
+  배치 밖에서는 바로 부르고, 델리게이트·셀 이벤트 콜백 안에서도 바로 부른다(증분 변경을 적용하거나 키 유지 리로드·재배치로 다시 읽는 중이면 활성 셀을 새 인덱스로 맞춘 뒤).
+  리로드·재배치가 기다리고 있으면 그쪽이 셀을 모두 다시 바인딩하므로 부르지 않는다.
+  배치 안에서는 항목마다 changeMask를 OR로 모아 `EndUpdates`에서 남은 셀마다 한 번 부르고(인덱스 변경 알림·재배치 뒤, 새 자리 바인딩·표시 시작 전), 새로 바인딩되는 셀(새로 활성 범위에 들어온 항목, 삽입·다시 받은 항목)과
+  지워진 항목, 리로드로 바뀐 배치에는 부르지 않는다. 갱신만 있는 배치는 콜백 안에서 끝나도 리로드하지 않고 셀마다 모은 changeMask로 한 번 부르므로, 표시 시작 핸들러에서 갱신을 배치로 묶어도 비용은 활성 셀 수만큼이다.
+- **다시 받기.** `ReloadCellView`는 그 항목만 크기(와 항목 ID)를 다시 묻고 활성 셀을 회수한 뒤 다시 받는다(셀 종류가 바뀌어도 된다, `BindVersion` 증가, 보이던 셀은 표시 끝 → 표시 시작).
+  활성 셀이 없으면 크기(와 ID)만 갱신하고 `GetCellView`는 부르지 않는다. 크기가 바뀌면 삽입과 같은 위치 보존 규칙을 따르고(맨 앞 항목 자신이면 그 안의 거리를 지킨다),
+  ID가 바뀌었으면 ID → 인덱스 사전을 그 자리부터 다시 맞춘다. 배치 안에서는 `EndUpdates`까지 미뤄 인덱스 이동을 따라가고, 같은 배치에서 지워지면 아무것도 하지 않는다.
+- **키 유지 리로드.** `PreserveCellsById`를 켜고 델리게이트가 항목 ID를 주면 `ReloadData(ReloadAnchor.FirstVisible / LastVisible)`·`ReloadData(in anchor)`·`ReloadDataKeepingPosition()`은
+  셀을 먼저 회수하지 않고 다시 읽은 뒤, 옛 활성 셀마다 같은 ID 항목의 새 인덱스를 찾아(이전 인덱스 자리에 같은 ID가 남아 있으면 그 자리, 아니면 앞 인덱스) 위 증분 변경과 같은 순서로 맞춘다.
+  새 활성 범위 밖이 되거나 ID가 사라진 셀은 회수하고, 한 자리에는 셀 하나만 옮긴다. 옮긴 셀은 새로 받은 크기로 배치한다. 위치 결과는 옵션을 끈 리로드와 같다.
+  - 같은 ID는 같은 셀 종류로 보고 그 셀을 그대로 쓴다(델리게이트에 셀 종류만 따로 물을 방법이 없다). 셀 프리팹을 통째로 바꿨으면 `ClearActive`를 먼저 부르거나 `ReloadData()`를 쓴다.
+  - 루프 모드에서는 같은 항목의 사본 중 셀이 화면에 있던 자리에 가장 가까운 사본으로 옮긴다(같은 화면이면 표시 이벤트가 없다).
+  - 처음부터 다시 그리거나 위치를 정하는 리로드(`ReloadData()`·`ReloadData(factor)`·Start·End·Factor), 다시 읽지 않는 재배치(`Spacing`·`Padding`·`Loop` 등)와 축 전환,
+    위 3·4의 리로드와 5에서 콜백 안 삽입·삭제·이동·다시 받기를 대신하는 리로드는 옵션과 무관하게 모든 셀을 다시 바인딩한다. 델리게이트를 바꾼 뒤 처음 다시 읽을 때도 그렇다.
+  - 배치·콜백 중 사용자가 직접 부른 위치 유지 리로드는 미뤄져도 키 유지를 따른다. 다만 배치에 기록했거나 리로드를 기다리는 동안(콜백 안) 알린 `RefreshCells`·`ReloadCellView`는
+    그 리로드가 대신 처리하므로, 이때는 키 유지 없이 모든 셀을 다시 바인딩한다.
+    리로드를 한 직후 부른 `RefreshCells`는 남은 셀에 그대로 전달된다. 키 유지 리로드·재배치가 셀을 맞추기 전에 사용자 코드(트윈 멈춤 알림, 다시 읽는 중의 델리게이트 등)가
+    부른 `RefreshCells`(그 안에서 닫은 갱신만 있는 배치 포함)는 새 인덱스로 보고 맞춘 뒤 부른다.
+  - 사용자 코드 예외로 셀 맞추기가 멈추면 다음 갱신에 모두 다시 바인딩하는 앵커 보존 리로드로 데이터와 맞춘다.
+- **비용.** 증분 변경은 크기·항목 ID 배열을 `Array.Copy`로 옮기고(용량이 모자랄 때만 늘린다) 삽입분만 델리게이트에 묻는다. 접두합과 ID 사전은 바뀐 가장 앞 자리부터 다시 맞춘다.
+  키 유지 리로드는 모든 항목의 크기·ID를 다시 받되(O(N)) 셀은 남은 만큼 바인딩하지 않는다. 워밍업 뒤에는 어느 쪽도 할당하지 않는다.
 
 ### 셀 훅 동작
 
@@ -243,7 +428,7 @@ _scroller.RestoreAnchor(saved);
 - 한 번의 범위 갱신은 표시 끝(`CellViewDidEndDisplay` → `OnBecameHidden`) → 회수(`CellViewWillRecycle` → `OnRecycled` → `CellViewVisibilityChanged`)
   → 활성화(델리게이트 `GetCellView` → `CellViewVisibilityChanged` → 위치 훅) → 표시 시작(`CellViewWillDisplay` → `OnBecameVisible`) 순서다.
   활성 범위는 그대로이고 미리보기 구간 셀만 뷰포트에 드나들면 표시 이벤트만 온다.
-- 표시 시작과 끝은 셀마다 항상 짝이 맞는다. 보이던 셀이 `ReloadData`·`ClearActive`·재배치로 회수·파괴될 때도 표시 끝을 먼저 받는다.
+- 표시 시작과 끝은 셀마다 항상 짝이 맞는다. 보이던 셀이 `ReloadData`·`ClearActive`·재배치·증분 삭제·`ReloadCellView`로 회수·파괴될 때도 표시 끝을 먼저 받는다.
   이벤트 핸들러가 예외를 던져도 가상 메서드는 불리고 활성 목록·표시 범위 장부는 어긋나지 않는다. 콜백 안 `ReloadData` 등은 다른 콜백과 같이 범위 갱신이 끝난 뒤 처리한다.
 - 예외는 스크롤러 자체가 파괴될 때(팝업 닫기·씬 언로드)다. 파괴 순서가 정해져 있지 않아 사용자 코드를 부르지 않고 활성 셀의 바인딩만 푼다(`BindVersion` 증가, `IsBound` false).
   표시 끝은 오지 않고 `IsDisplayed`가 마지막 값으로 남으므로, 표시 중 시작한 일(노출 타이머 등)은 셀의 `OnDestroy`에서 `IsDisplayed`를 보고 정리한다.
@@ -254,7 +439,8 @@ _scroller.RestoreAnchor(saved);
   콜백 안에서 바로 끝난 스냅(즉시 `Snap()` 등)의 `ScrollerSnapped`는 범위를 다시 맞춘 뒤에 오므로 셀 번호와 셀 뷰가 순환 보정 뒤 새 위치 기준이다.
   점프 완료 콜백은 콜백 안에서 바로 불린다.
 - `BindVersion`은 셀이 데이터에 바인딩될 때(활성화할 슬롯용으로 `GetCellView(prefab)`가 내줄 때)와 바인딩이 풀릴 때(회수, `ClearActive`로 파괴, 활성인 채로 스크롤러와 함께 파괴) 1씩 는다.
-  델리게이트 `GetCellView` 안에서 읽은 값이 그 바인딩의 값이다. `RefreshCellView`·루프 순환 보정처럼 같은 데이터로 남으면 늘지 않는다. `IsBound`는 `DataIndex >= 0`이다.
+  델리게이트 `GetCellView` 안에서 읽은 값이 그 바인딩의 값이다. `RefreshCellView`(`RefreshCells`)·루프 순환 보정·증분 변경으로 인덱스만 바뀔 때처럼 같은 데이터로 남으면 늘지 않는다.
+  `ReloadCellView`는 회수한 뒤 다시 바인딩하므로 는다. `IsBound`는 `DataIndex >= 0`이다.
 - 위치 훅(`NotifyCellPositions`)은 위치·활성 범위·레이아웃·뷰포트 크기가 바뀐 프레임에 한 번, 스크롤러 LateUpdate 끝(실행 순서 100)에서 활성 셀마다
   `CellViewPositionChanged` → `OnViewportPositionChanged`를 부른다.
   normalizedOffset = (셀 시작 + 셀 크기 × `CellPositionPivot` − 뷰포트 시작) / 뷰포트 길이. 0 = 앞(위·왼쪽) 가장자리, 0.5 = 가운데, 1 = 뒤 가장자리이고, 미리보기 구간 셀은 0 미만·1 초과가 될 수 있다.
@@ -262,13 +448,13 @@ _scroller.RestoreAnchor(saved);
   - 스크롤러 LateUpdate 뒤(더 늦은 실행 순서의 LateUpdate·코루틴 등)에서 위치가 바뀌면 다음 프레임 LateUpdate에 반영된다.
   - 아무것도 바뀌지 않은 프레임에는 부르지 않고, 꺼져 있으면 계산 자체를 건너뛴다. 뷰포트 길이가 0이면 부르지 않는다. 레이아웃 캐시로만 계산해 할당이 없다.
   - 셀 루트 RectTransform은 스크롤러가 배치하므로 위치 훅에서는 자식(스케일·회전·투명도)만 바꾼다.
-- 셀 뷰 훅(`OnBecameVisible`·`OnBecameHidden`·`OnViewportPositionChanged`)은 `protected internal`이다. 다른 어셈블리에서는 `protected override`로 재정의한다.
+- 셀 뷰 훅(`OnBecameVisible`·`OnBecameHidden`·`OnViewportPositionChanged`·`OnDataIndexChanged`)은 `protected internal`이다. 다른 어셈블리에서는 `protected override`로 재정의한다.
 
 ## 샘플
 
 Package Manager → CyKim Scroller → Samples → **Basic** Import.
-빈 씬의 GameObject에 `BasicSample`을 붙이고 Play하면 세로 목록·점프 버튼·휠 피커·루프 캐러셀이 만들어진다.
-휠 피커와 캐러셀은 위치 훅으로 행·카드 모양을 그린다.
+빈 씬의 GameObject에 `BasicSample`을 붙이고 Play하면 세로 목록·점프와 편집 버튼·휠 피커·루프 캐러셀이 만들어진다.
+편집 버튼(맨 위에 3개 삽입, 보이는 항목 삭제, 보이는 항목을 맨 위로 이동)은 증분 변경으로 보던 화면을 지키고, 휠 피커와 캐러셀은 위치 훅으로 행·카드 모양을 그린다.
 
 ## 다른 목록 UI와 비교
 
