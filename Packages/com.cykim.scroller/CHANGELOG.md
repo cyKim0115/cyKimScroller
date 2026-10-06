@@ -2,6 +2,13 @@
 
 이 패키지의 변경 내역. 형식은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/), 버전은 [SemVer](https://semver.org/lang/ko/)를 따른다.
 
+## [Unreleased]
+
+### Added
+- 끝 근접 이벤트 `ScrollerNearEdge`(`ScrollerNearEdgeHandler`, `ScrollEdge` Start·End)와 `NearEdgeDistance`(px, 기본 0 = 끔): 콘텐츠 처음·끝까지 남은 거리가 그 값 이하가 되면
+  LateUpdate 끝에서 가장자리마다 한 번 알리고 잠근다. 남은 거리가 × 1.5를 넘게 멀어지거나 데이터 개수가 바뀌면 다시 연다.
+  콘텐츠가 뷰포트보다 짧으면 End만 알리고(개수가 바뀌지 않으면 다시 알리지 않음), 루프 모드에서는 알리지 않는다
+
 ## [0.2.1] - 2026-10-06
 
 ### Changed
