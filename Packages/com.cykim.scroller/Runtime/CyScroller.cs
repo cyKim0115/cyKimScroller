@@ -1348,7 +1348,8 @@ namespace CyKim.Scroller
         /// <para>델리게이트를 다시 읽고 축은 그대로인 재배치(<see cref="ReloadDataKeepingPosition"/>)는 <see cref="PreserveCellsById"/>를 따른다:
         /// 셀을 먼저 회수하지 않고 다시 읽은 뒤 ID가 같은 활성 셀을 새 인덱스로 옮긴다(<see cref="ReconcilePreservedCells"/>). 다른 재배치는 모든 셀을 다시 바인딩한다.
         /// 키 유지 리로드(<see cref="ReloadPreservingCells"/>)와 같이, 셀을 맞추기 전에 사용자 코드(다시 읽는 중의 델리게이트)가 부른 <see cref="RefreshCells"/>는
-        /// 새 인덱스로 보고 맞춘 뒤 남은 셀에 부르고, 다시 읽거나 맞추는 도중 사용자 코드 예외로 멈추면 모두 다시 바인딩하는 앵커 보존 리로드를 미뤄 다음 갱신에 맞춘다.</para>
+        /// 새 인덱스로 보고 맞춘 뒤 남은 셀에 부르고, 다시 읽거나 맞추는 도중 사용자 코드 예외로 멈추면 모두 다시 바인딩하는 앵커 보존 리로드를 미뤄 다음 갱신에 맞춘다
+        /// (다시 읽다 멈췄으면 반쯤 읽은 배치 대신 다시 읽기 전 화면으로 간다). 셀을 맞추기 전에 닫은 배치의 미룬 작업은 맞춘 뒤 범위 갱신에서 처리한다.</para>
         /// </remarks>
         private void ApplyRelayout(bool requeryDelegate, bool reconfigure)
         {
@@ -1397,6 +1398,7 @@ namespace CyKim.Scroller
             // (활성 셀이 아직 옛 인덱스라 바로 부르면 다른 항목의 셀이 받는다). ReloadPreservingCells와 같다.
             bool tweenEmptied = false;
             Action emptiedComplete = null;
+            bool rebuilt = false;
             bool completed = false;
             if (preserve)
             {
@@ -1406,6 +1408,7 @@ namespace CyKim.Scroller
             try
             {
                 RebuildLayout(requeryDelegate);
+                rebuilt = true;
 
                 if (alignById)
                 {
@@ -1477,7 +1480,8 @@ namespace CyKim.Scroller
                     if (!completed)
                     {
                         // 다시 읽거나 셀을 맞추는 도중 사용자 코드 예외로 멈췄다. 활성 셀이 옛 배치에 남을 수 있으므로 모두 다시 바인딩하는 리로드가 다음 갱신에 맞춘다.
-                        ScheduleStructuralReload();
+                        // 다시 읽다 멈췄으면 그 리로드는 반쯤 읽은 배치 대신 다시 읽기 전 화면(anchor)으로 간다.
+                        ScheduleRecoveryReload(!rebuilt, in anchor);
                     }
                 }
             }
