@@ -32,7 +32,14 @@ namespace CyKim.Scroller.Tests
         /// <summary>크기를 돌려주기 직전에 불린다 (증분 변경을 적용하는 중 삽입분 크기를 물을 때의 사용자 코드를 흉내 낸다).</summary>
         public System.Action<CyScroller, int> GetCellViewSizeHook;
 
-        public int GetNumberOfCells(CyScroller scroller) => Items.Count;
+        /// <summary>개수를 돌려주기 직전에 불린다 (다시 읽기를 시작할 때의 사용자 코드를 흉내 낸다).</summary>
+        public System.Action<CyScroller> GetNumberOfCellsHook;
+
+        public int GetNumberOfCells(CyScroller scroller)
+        {
+            GetNumberOfCellsHook?.Invoke(scroller);
+            return Items.Count;
+        }
 
         public float GetCellViewSize(CyScroller scroller, int dataIndex)
         {
