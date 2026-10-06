@@ -26,7 +26,15 @@ namespace CyKim.Scroller
         // 앞에서부터 몇 개의 _cycleStarts가 지금 크기·간격에 맞는지. Build는 그다음부터만 다시 더한다.
         // 항목 i의 시작은 크기 [0, i)에만 달려 있으므로 i번 크기가 바뀌어도 i번 시작까지는 그대로다.
         // 끝 항목을 지우면 DataCount보다 클 수 있다 (지운 자리의 시작은 그 뒤에 붙일 항목의 시작으로 여전히 맞다).
+        // 미룬 크기 변화(_deferred*)가 있으면 _cycleStarts는 그 변화 전 크기 기준이다.
         private int _validStarts;
+
+        // 접두합을 다시 더하지 않고 미룬 크기 변화 (SetSizeDeferred). 항목 인덱스와 (지금 크기 − 접두합이 아는 크기).
+        // 항목 j 시작 = _cycleStarts[j] + (인덱스 < j인 변화의 합). 크기 애니메이션처럼 몇 항목만 매 프레임 바뀔 때 Build를 O(1)로 둔다.
+        // 다른 크기·개수 변경은 먼저 접는다(CommitDeferredSizes). 개수가 적으므로 선형으로 찾는다.
+        private int[] _deferredIndices = Array.Empty<int>();
+        private float[] _deferredDeltas = Array.Empty<float>();
+        private int _deferredCount;
 
         public int DataCount { get; private set; }
 
@@ -54,6 +62,7 @@ namespace CyKim.Scroller
         /// <summary>데이터 개수를 정하고 크기 버퍼를 확보한다. 크기는 0으로 초기화되지 않는다 (버퍼를 새로 만들면 내용을 옮기지 않는다).</summary>
         public void SetDataCount(int dataCount)
         {
+            CommitDeferredSizes();
             dataCount = Mathf.Max(0, dataCount);
             if (_sizes.Length < dataCount)
             {
@@ -68,8 +77,67 @@ namespace CyKim.Scroller
 
         public void SetSize(int dataIndex, float size)
         {
+            CommitDeferredSizes();
             _sizes[dataIndex] = size > 0f ? size : 0f;
             InvalidateStartsAfter(dataIndex);
+        }
+
+        /// <summary>
+        /// dataIndex 크기를 바꾸되 접두합은 다시 더하지 않고 그 뒤 항목 위치에 변화량을 더해 계산한다 (크기 애니메이션의 한 걸음).
+        /// 다음 <see cref="Build"/>는 O(1)이고, 위치 조회는 미룬 항목 수만큼 더 든다. 다른 크기·개수 변경이나 <see cref="CommitDeferredSizes"/>가 미룬 변화를 접는다.
+        /// 루프 배치나 간격이 바뀌는 Build도 먼저 접는다. 미룬 항목 수가 늘 때 말고는 할당하지 않는다.
+        /// </summary>
+        public void SetSizeDeferred(int dataIndex, float size)
+        {
+            size = size > 0f ? size : 0f;
+            float delta = size - _sizes[dataIndex];
+            if (delta == 0f)
+            {
+                return;
+            }
+
+            _sizes[dataIndex] = size;
+            if (dataIndex + 1 >= _validStarts)
+            {
+                // 이 뒤 시작은 어차피 다음 Build가 지금 크기로 다시 더한다.
+                return;
+            }
+
+            for (int i = 0; i < _deferredCount; i++)
+            {
+                if (_deferredIndices[i] == dataIndex)
+                {
+                    _deferredDeltas[i] += delta;
+                    return;
+                }
+            }
+
+            if (_deferredCount == _deferredIndices.Length)
+            {
+                int capacity = Mathf.Max(4, _deferredCount * 2);
+                Array.Resize(ref _deferredIndices, capacity);
+                Array.Resize(ref _deferredDeltas, capacity);
+            }
+
+            _deferredIndices[_deferredCount] = dataIndex;
+            _deferredDeltas[_deferredCount] = delta;
+            _deferredCount++;
+        }
+
+        /// <summary>미룬 크기 변화가 있는지 (<see cref="SetSizeDeferred"/>).</summary>
+        public bool HasDeferredSizes => _deferredCount > 0;
+
+        /// <summary>
+        /// 미룬 크기 변화를 접는다. 크기는 이미 지금 값이므로 가장 앞 미룬 자리 뒤 시작을 무효로 해 다음 <see cref="Build"/>가 그 자리부터 다시 더하게 한다.
+        /// </summary>
+        public void CommitDeferredSizes()
+        {
+            for (int i = 0; i < _deferredCount; i++)
+            {
+                InvalidateStartsAfter(_deferredIndices[i]);
+            }
+
+            _deferredCount = 0;
         }
 
         public float GetSize(int dataIndex) => _sizes[dataIndex];
@@ -83,6 +151,7 @@ namespace CyKim.Scroller
         /// </summary>
         public void InvalidateSize(int index)
         {
+            CommitDeferredSizes();
             _sizes[index] = UNSET_SIZE;
             InvalidateStartsAfter(index);
         }
@@ -98,6 +167,7 @@ namespace CyKim.Scroller
                 return;
             }
 
+            CommitDeferredSizes();
             EnsureCapacityPreserving(DataCount + count);
             Array.Copy(_sizes, index, _sizes, index + count, DataCount - index);
             for (int i = index; i < index + count; i++)
@@ -117,6 +187,7 @@ namespace CyKim.Scroller
                 return;
             }
 
+            CommitDeferredSizes();
             Array.Copy(_sizes, index + count, _sizes, index, DataCount - index - count);
             DataCount -= count;
             InvalidateStartsAfter(index);
@@ -130,6 +201,7 @@ namespace CyKim.Scroller
                 return;
             }
 
+            CommitDeferredSizes();
             float size = _sizes[fromIndex];
             if (fromIndex < toIndex)
             {
@@ -153,6 +225,12 @@ namespace CyKim.Scroller
             float viewportExtent, float lookAheadBefore = 0f, float lookAheadAfter = 0f)
         {
             spacing = Mathf.Max(0f, spacing);
+            if (loop || spacing != Spacing)
+            {
+                // 미룬 크기 변화는 루프가 아닌 같은 간격 배치에서만 이어 쓴다.
+                CommitDeferredSizes();
+            }
+
             if (spacing != Spacing)
             {
                 _validStarts = 0;
@@ -177,7 +255,7 @@ namespace CyKim.Scroller
             }
 
             _validStarts = count;
-            CycleExtent = count > 0 ? _cycleStarts[count - 1] + (_sizes[count - 1] + Spacing) : 0f;
+            CycleExtent = count > 0 ? _cycleStarts[count - 1] + GetDeferredOffset(count - 1) + (_sizes[count - 1] + Spacing) : 0f;
             IsLoop = loop && DataCount > 0 && CycleExtent > 0f;
             SetCount = IsLoop
                 ? ComputeLoopSetCount(CycleExtent, viewportExtent, Spacing, lookAheadBefore, lookAheadAfter)
@@ -243,7 +321,7 @@ namespace CyKim.Scroller
         {
             int set = slot / DataCount;
             int dataIndex = slot - set * DataCount;
-            return PaddingBefore + set * CycleExtent + _cycleStarts[dataIndex];
+            return PaddingBefore + set * CycleExtent + _cycleStarts[dataIndex] + GetDeferredOffset(dataIndex);
         }
 
         public float GetSlotSize(int slot) => _sizes[slot % DataCount];
@@ -252,7 +330,7 @@ namespace CyKim.Scroller
         {
             int set = slot / DataCount;
             int dataIndex = slot - set * DataCount;
-            return PaddingBefore + set * CycleExtent + _cycleStarts[dataIndex] + _sizes[dataIndex];
+            return PaddingBefore + set * CycleExtent + _cycleStarts[dataIndex] + GetDeferredOffset(dataIndex) + _sizes[dataIndex];
         }
 
         /// <summary>
@@ -388,6 +466,21 @@ namespace CyKim.Scroller
 
             float nextStart = GetSlotStart(slot + 1);
             return position - end <= nextStart - position ? slot : slot + 1;
+        }
+
+        /// <summary>dataIndex 앞 항목의 미룬 크기 변화 합 (<see cref="SetSizeDeferred"/>). 미룬 것이 없으면 0. 할당 없음.</summary>
+        private float GetDeferredOffset(int dataIndex)
+        {
+            float offset = 0f;
+            for (int i = 0; i < _deferredCount; i++)
+            {
+                if (_deferredIndices[i] < dataIndex)
+                {
+                    offset += _deferredDeltas[i];
+                }
+            }
+
+            return offset;
         }
 
         /// <summary>index 자리 크기가 바뀌었다. index번 시작까지는 그대로이고 그 뒤는 다음 Build가 다시 더한다.</summary>

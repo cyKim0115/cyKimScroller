@@ -21,11 +21,23 @@ namespace CyKim.Scroller
 
             /// <summary>항목을 다시 받음 (<see cref="ReloadCellView"/>). 자리는 그대로이고 크기(와 ID)를 다시 묻고 활성 셀은 다시 바인딩한다.</summary>
             Reload,
+
+            /// <summary>
+            /// 크기만 바뀜 (<see cref="ResizeCellView"/>). 자리·바인딩은 그대로다. Duration이 0이면 크기(와 ID)를 다시 묻고 바로 바꾸고,
+            /// 0보다 크면 배치 끝에 목표 크기를 물어 크기 애니메이션을 시작한다 (<see cref="UpdateResizeAnimations"/>).
+            /// </summary>
+            Resize,
+
+            /// <summary>
+            /// 크기 애니메이션 한 걸음. 델리게이트에 묻지 않고 Size로 바꾼다. 자리·바인딩은 그대로다. 배치에는 기록되지 않는다.
+            /// 중간 걸음은 접두합을 다시 더하지 않고 미루고(<see cref="CyScrollerLayout.SetSizeDeferred"/>), 마지막 걸음(B = 1)은 접어서 한 번 다시 더한다.
+            /// </summary>
+            SetSize,
         }
 
         /// <summary>
-        /// 기록한 연산. Insert·Remove·Refresh는 (위치, 개수), Move는 (원래 인덱스, 옮길 인덱스), Reload는 (위치). 인덱스는 앞 연산까지 반영한 기준이다.
-        /// Mask는 Refresh가 알린 changeMask다.
+        /// 기록한 연산. Insert·Remove·Refresh는 (위치, 개수), Move는 (원래 인덱스, 옮길 인덱스), Reload·Resize·SetSize는 (위치). 인덱스는 앞 연산까지 반영한 기준이다.
+        /// Mask는 Refresh가 알린 changeMask다. Resize·SetSize는 Anchor로 화면 기준을, Resize는 Duration·Tween으로 애니메이션을, SetSize는 Size로 바꿀 크기와 B로 마지막 걸음(1)인지를 준다.
         /// </summary>
         private struct UpdateOp
         {
@@ -33,6 +45,10 @@ namespace CyKim.Scroller
             public int A;
             public int B;
             public int Mask;
+            public ResizeAnchor Anchor;
+            public float Duration;
+            public TweenType Tween;
+            public float Size;
         }
 
         // BeginUpdates 깊이. 0보다 크면 범위 갱신·델리게이트 호출·리로드·재배치·정리를 바깥 EndUpdates까지 미룬다.
@@ -471,8 +487,16 @@ namespace CyKim.Scroller
                     }
                     else if (_loop || _layout.IsLoop)
                     {
-                        // 루프는 같은 데이터가 여러 슬롯에 있어 증분으로 옮기지 않고 앵커를 지키는 전체 리로드로 바꾼다.
-                        RequestReload(ReloadAnchor.FirstVisible, 0f, false);
+                        if (OnlyResizes(ops))
+                        {
+                            // 크기 변경(과 내용 갱신)만 있다. 리로드 대신 크기를 바로 바꾸고 위치를 지키는 재배치로 맞춘다 (트윈·정렬은 이어 간다).
+                            ApplyLoopResizes(ops);
+                        }
+                        else
+                        {
+                            // 루프는 같은 데이터가 여러 슬롯에 있어 증분으로 옮기지 않고 앵커를 지키는 전체 리로드로 바꾼다.
+                            RequestReload(ReloadAnchor.FirstVisible, 0f, false);
+                        }
                     }
                     else
                     {
@@ -739,6 +763,14 @@ namespace CyKim.Scroller
             float previousPosition = ReadPosition(_appliedVertical);
             CyScrollerAnchor anchor = CaptureLayoutAnchor(false, out float overscroll);
 
+            // 크기 변경이 셀 가장자리(Start·End)를 지키라고 했으면 배치 전 그 가장자리 위치를 적어 둔다 (마지막 요청을 따른다).
+            int edgeItem = FindResizeEdgeItem(ops, out ResizeAnchor edgeAnchor);
+            float edgeBefore = edgeItem < 0 ? 0f
+                : edgeAnchor == ResizeAnchor.Start ? _layout.GetSlotStart(edgeItem) : _layout.GetSlotEnd(edgeItem);
+
+            // 진행 중인 크기 애니메이션도 같은 항목을 따라간다. 지워지거나 같은 항목을 다시 받거나 크기를 새로 요청했으면 버린다.
+            MapResizeAnimationsThroughUpdates(ops);
+
             // 트윈·정렬 대상을 같은 항목으로 옮긴다. 지워졌으면 트윈을 멈추고(완료 콜백·스냅 이벤트 없음) 정렬을 푼다.
             // 끝난 점프의 정렬 대상이 MoveCell로 옮겨졌으면 정렬을 푼다. 따라가면 화면이 옮겨진 항목으로 튀므로 보던 화면을 지킨다(맨 앞 항목 이동과 같은 규칙).
             // 진행 중인 트윈은 옮겨진 항목을 따라간다.
@@ -773,10 +805,14 @@ namespace CyKim.Scroller
             ApplyUpdatesToLayout(ops, oldCount);
             RebuildLayout(false);
 
-            // 위치: 트윈은 맨 앞 항목 기준 화면을 지키고 시작점을 다시 잡는다. 정렬은 같은 항목에 다시 맞추고, 아니면 맨 앞 항목 기준으로 지킨다.
+            // 위치: 트윈은 맨 앞 항목(크기 변경이 가장자리를 정했으면 그 가장자리) 기준 화면을 지키고 시작점을 다시 잡는다.
+            // 정렬은 같은 항목에 다시 맞추고, 아니면 같은 기준으로 지킨다.
+            float preservedDelta = edgeItem >= 0
+                ? GetResizeEdgeDelta(ops, edgeItem, edgeAnchor, edgeBefore, in anchor, overscroll, previousPosition)
+                : GetPreservedPositionDelta(ops, in anchor, overscroll, previousPosition);
             if (tweening)
             {
-                ShiftScrollPosition(GetPreservedPositionDelta(ops, in anchor, overscroll, previousPosition));
+                ShiftScrollPosition(preservedDelta);
                 _align.Slot = alignIndex;
                 RebaseTween(0f);
             }
@@ -791,7 +827,7 @@ namespace CyKim.Scroller
             }
             else
             {
-                ShiftScrollPosition(GetPreservedPositionDelta(ops, in anchor, overscroll, previousPosition));
+                ShiftScrollPosition(preservedDelta);
             }
 
             ReconcileActiveCells(ops);
@@ -816,7 +852,8 @@ namespace CyKim.Scroller
         }
 
         /// <summary>
-        /// 크기·항목 ID 배열을 연산 순서대로 옮기고(Array.Copy), 삽입한 자리와 다시 받을 항목(Reload)만 델리게이트에 크기·ID를 최종 인덱스로 묻는다.
+        /// 크기·항목 ID 배열을 연산 순서대로 옮기고(Array.Copy), 삽입한 자리와 다시 받을 항목(Reload)·바로 바꿀 크기 변경(Resize)만 델리게이트에 크기·ID를 최종 인덱스로 묻는다.
+        /// 애니메이션 걸음(SetSize)은 묻지 않고 그 크기로 바꾸고, 애니메이션할 크기 변경은 끝에 목표 크기만 물어 애니메이션을 시작한다.
         /// ID → 인덱스 사전은 구조 연산이 바꾼 가장 앞 자리(다시 받은 항목의 ID가 바뀌었으면 그 자리)부터 다시 맞춘다. 접두합은 다음 Build가 바뀐 자리부터 다시 더한다.
         /// </summary>
         private void ApplyUpdatesToLayout(List<UpdateOp> ops, int oldCount)
@@ -839,6 +876,13 @@ namespace CyKim.Scroller
                         break;
                     case UpdateOpType.Reload:
                         firstQueried = Mathf.Min(firstQueried, op.A);
+                        break;
+                    case UpdateOpType.Resize:
+                        if (op.Duration <= 0f)
+                        {
+                            firstQueried = Mathf.Min(firstQueried, op.A);
+                        }
+
                         break;
                 }
             }
@@ -885,6 +929,26 @@ namespace CyKim.Scroller
                         // 자리는 그대로 두고 크기만 받지 않은 상태로 만든다. ID 자리에는 옛 ID가 남아 뒤따른 연산과 같이 옮겨진다.
                         _layout.InvalidateSize(op.A);
                         break;
+                    case UpdateOpType.Resize:
+                        // 바로 바꾸는 크기 변경은 다시 받기처럼 크기를 다시 묻는다. 애니메이션은 아래에서 최종 인덱스로 목표만 묻는다.
+                        if (op.Duration <= 0f)
+                        {
+                            _layout.InvalidateSize(op.A);
+                        }
+
+                        break;
+                    case UpdateOpType.SetSize:
+                        // 중간 걸음은 접두합을 다시 더하지 않는다 (10만 항목 앞쪽이어도 Build가 O(1)). 마지막 걸음은 접어서 한 번만 다시 더한다.
+                        if (op.B != 0)
+                        {
+                            _layout.SetSize(op.A, op.Size);
+                        }
+                        else
+                        {
+                            _layout.SetSizeDeferred(op.A, op.Size);
+                        }
+
+                        break;
                 }
             }
 
@@ -927,6 +991,8 @@ namespace CyKim.Scroller
             {
                 AddItemIdEntries(firstChanged, newCount, fetchedIds);
             }
+
+            StartRequestedResizeAnimations(ops);
         }
 
         private void InsertItemIdSlots(int index, int count, int dataCount)
@@ -1367,7 +1433,7 @@ namespace CyKim.Scroller
                         }
 
                         break;
-                    default:
+                    case UpdateOpType.Reload:
                         // 다시 받을 항목은 새로 바인딩한다 (모은 갱신은 쓸 일이 없다).
                         if (index == op.A)
                         {
@@ -1375,6 +1441,9 @@ namespace CyKim.Scroller
                             return -1;
                         }
 
+                        break;
+                    default:
+                        // 크기 변경은 셀을 그대로 두고 크기·위치만 바꾼다 (다시 바인딩하지 않는다).
                         break;
                 }
             }

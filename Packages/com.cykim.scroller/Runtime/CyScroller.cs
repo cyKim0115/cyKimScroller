@@ -675,6 +675,10 @@ namespace CyKim.Scroller
             }
 
             float deltaTime = Time.unscaledDeltaTime;
+
+            // 셀 크기 애니메이션을 먼저 진행한다. 트윈 목표는 바뀐 배치에서 다시 계산한다.
+            UpdateResizeAnimations(deltaTime);
+
             if (_tweening)
             {
                 UpdateTween(deltaTime);
@@ -1268,6 +1272,9 @@ namespace CyKim.Scroller
         {
             if (requeryDelegate)
             {
+                // 다시 읽은 크기가 최종 값이다. 진행 중인 크기 애니메이션은 버린다 (다시 읽다 예외로 멈춰도 남지 않게 먼저).
+                ClearResizeAnimations();
+
                 int count = 0;
                 if (_delegate != null)
                 {

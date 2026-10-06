@@ -2,6 +2,21 @@
 
 이 패키지의 변경 내역. 형식은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/), 버전은 [SemVer](https://semver.org/lang/ko/)를 따른다.
 
+## [Unreleased]
+
+### Added
+- 셀 크기 변경 `ResizeCellView(dataIndex, duration, tweenType, anchor)`: 그 항목의 크기만 델리게이트에 다시 묻고, 셀은 다시 바인딩하지 않은 채(`BindVersion` 그대로) 크기·위치만 바꾼다.
+  `duration`이 0보다 크면 LateUpdate에서 그 시간 동안 크기를 바꾸고(`IsResizing`), 같은 항목에 새 요청이 오면 지금 크기에서 이어 간다.
+  그 항목이 지워지거나 `ReloadCellView`·리로드로 크기를 다시 읽으면 애니메이션을 버린다. 배치(`BeginUpdates`) 안에서는 다른 증분 변경처럼 순차 의미론을 따른다
+- `ResizeAnchor`(Auto·Start·End): Auto는 다른 증분 변경과 같은 위치 보존, Start·End는 그 셀의 위·아래 가장자리를 화면에 고정한다. 결과는 스크롤 범위로 자른다
+- 셀 뷰 `RequestResize(duration, tweenType, anchor)`: 그 셀의 `DataIndex`로 `ResizeCellView`를 부른다
+- Profiler 마커 `CyScroller.Resize` (크기 애니메이션 한 걸음)
+
+### Changed
+- 크기 애니메이션의 중간 걸음은 레이아웃 접두합을 다시 더하지 않고 그 뒤 항목 위치에 변화량을 더해 계산한다. 10만 항목의 맨 앞 항목을 애니메이션해도 걸음마다 항목 수와 무관하게 활성 셀 수만큼 들고,
+  마지막 걸음이나 다른 크기·개수 변경 때 바뀐 자리부터 한 번 다시 더한다
+- 루프 모드에서 크기 변경(과 내용 갱신)만 있는 배치는 전체 리로드 대신 위치를 지키는 재배치로 맞춘다 (진행 중인 트윈·점프 정렬을 이어 간다. 애니메이션 없이 바로 바꾸고 활성 셀은 다시 바인딩한다)
+
 ## [0.2.1] - 2026-10-06
 
 ### Changed

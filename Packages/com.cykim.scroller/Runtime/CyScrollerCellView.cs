@@ -117,6 +117,25 @@ namespace CyKim.Scroller
         /// </remarks>
         public virtual void RefreshCellView(int changeMask) => RefreshCellView();
 
+        /// <summary>
+        /// 이 셀이 바인딩된 항목의 크기를 스크롤러에 다시 묻게 한다 (<see cref="CyScroller.ResizeCellView"/>(<see cref="DataIndex"/>, ...)).
+        /// 펼치기·접기처럼 셀 안에서 크기를 바꿀 때, 델리게이트가 돌려줄 크기를 먼저 바꾼 뒤 부른다. 바인딩되지 않은 셀이면 아무것도 하지 않는다.
+        /// </summary>
+        /// <param name="duration">0 이하면 바로 바꾼다. 0보다 크면 이 시간(초) 동안 바꾼다.</param>
+        /// <param name="tweenType">크기 애니메이션 곡선.</param>
+        /// <param name="anchor">화면에서 제자리에 둘 기준.</param>
+        /// <remarks>
+        /// <see cref="DataIndex"/>는 배치 전 인덱스이므로, 증분 변경 배치(<see cref="CyScroller.BeginUpdates"/>) 안에서 구조 연산 뒤에 부를 때는
+        /// 스크롤러의 <see cref="CyScroller.ResizeCellView"/>에 그 시점 인덱스를 직접 넘긴다.
+        /// </remarks>
+        public void RequestResize(float duration = 0f, TweenType tweenType = TweenType.EaseOutCubic, ResizeAnchor anchor = ResizeAnchor.Auto)
+        {
+            if (Scroller != null && IsBound)
+            {
+                Scroller.ResizeCellView(DataIndex, duration, tweenType, anchor);
+            }
+        }
+
         /// <summary>풀로 돌아가기 직전에 호출된다. 이전 데이터 상태를 정리할 때 쓴다.</summary>
         public virtual void OnRecycled()
         {

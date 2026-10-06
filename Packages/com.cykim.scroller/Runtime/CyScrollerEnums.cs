@@ -73,6 +73,22 @@ namespace CyKim.Scroller
         LastVisible = 4,
     }
 
+    /// <summary>셀 크기가 바뀔 때(<see cref="CyScroller.ResizeCellView"/>) 화면에서 제자리에 둘 기준. 결과는 스크롤 범위로 잘린다.</summary>
+    public enum ResizeAnchor
+    {
+        /// <summary>
+        /// 다른 증분 변경과 같은 규칙. 뷰포트 맨 앞 항목보다 앞에서 생긴 크기 변화만큼 스크롤 위치를 옮겨 보던 화면을 지키고,
+        /// 맨 앞 항목 자신이거나 그 뒤 항목이면 옮기지 않는다 (셀이 뒤쪽으로 늘어나거나 줄어든다).
+        /// </summary>
+        Auto = 0,
+
+        /// <summary>그 셀의 시작(위·왼쪽) 가장자리를 화면에 고정한다. 셀은 뒤쪽(아래·오른쪽)으로 늘어나거나 줄어든다.</summary>
+        Start = 1,
+
+        /// <summary>그 셀의 끝(아래·오른쪽) 가장자리를 화면에 고정한다. 셀은 앞쪽(위·왼쪽)으로 늘어나거나 줄어든다.</summary>
+        End = 2,
+    }
+
     /// <summary>
     /// 점프·스냅 트윈 곡선. 직렬화 값이 바뀌지 않도록 숫자를 고정한다.
     /// </summary>
