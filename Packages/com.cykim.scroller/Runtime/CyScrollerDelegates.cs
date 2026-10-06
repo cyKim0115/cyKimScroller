@@ -40,4 +40,7 @@ namespace CyKim.Scroller
 
     /// <summary>점프·스냅 트윈 상태가 바뀔 때.</summary>
     public delegate void ScrollerTweeningChangedHandler(CyScroller scroller, bool tweening);
+
+    /// <summary>콘텐츠 가장자리까지 남은 거리가 <see cref="CyScroller.NearEdgeDistance"/> 이하가 됐을 때. 다음 페이지를 불러오는 데 쓴다.</summary>
+    public delegate void ScrollerNearEdgeHandler(CyScroller scroller, ScrollEdge edge);
 }

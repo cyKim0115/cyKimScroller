@@ -29,6 +29,13 @@ namespace CyKim.Scroller
         Forward = 2,
     }
 
+    /// <summary>콘텐츠의 가장자리. 세로면 위(Start)·아래(End), 가로면 왼쪽(Start)·오른쪽(End).</summary>
+    public enum ScrollEdge
+    {
+        Start = 0,
+        End = 1,
+    }
+
     /// <summary><see cref="CyScroller.ScrollIntoView"/>에서 셀을 뷰포트 어디에 맞출지.</summary>
     public enum ScrollAlign
     {
