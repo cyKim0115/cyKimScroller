@@ -17,8 +17,16 @@ namespace CyKim.Scroller
         // 짧은 사이클(크기 0 셀 등)에서 세트 수가 폭주하지 않게 막는 상한.
         private const int MAX_LOOP_HALF_SETS = 512;
 
+        // 아직 받지 않은 크기 (InsertSizes가 넣는다). SetSize는 음수를 0으로 자르므로 이 값은 InsertSizes만 만든다.
+        private const float UNSET_SIZE = -1f;
+
         private float[] _sizes = Array.Empty<float>();
         private float[] _cycleStarts = Array.Empty<float>();
+
+        // 앞에서부터 몇 개의 _cycleStarts가 지금 크기·간격에 맞는지. Build는 그다음부터만 다시 더한다.
+        // 항목 i의 시작은 크기 [0, i)에만 달려 있으므로 i번 크기가 바뀌어도 i번 시작까지는 그대로다.
+        // 끝 항목을 지우면 DataCount보다 클 수 있다 (지운 자리의 시작은 그 뒤에 붙일 항목의 시작으로 여전히 맞다).
+        private int _validStarts;
 
         public int DataCount { get; private set; }
 
@@ -43,7 +51,7 @@ namespace CyKim.Scroller
         /// <summary>가운데 세트 첫 셀 시작 위치.</summary>
         public float MiddleSetStart => PaddingBefore + (SetCount / 2) * CycleExtent;
 
-        /// <summary>데이터 개수를 정하고 크기 버퍼를 확보한다. 크기는 0으로 초기화되지 않는다.</summary>
+        /// <summary>데이터 개수를 정하고 크기 버퍼를 확보한다. 크기는 0으로 초기화되지 않는다 (버퍼를 새로 만들면 내용을 옮기지 않는다).</summary>
         public void SetDataCount(int dataCount)
         {
             dataCount = Mathf.Max(0, dataCount);
@@ -52,6 +60,7 @@ namespace CyKim.Scroller
                 int capacity = Mathf.Max(dataCount, _sizes.Length * 2);
                 _sizes = new float[capacity];
                 _cycleStarts = new float[capacity];
+                _validStarts = 0;
             }
 
             DataCount = dataCount;
@@ -60,29 +69,105 @@ namespace CyKim.Scroller
         public void SetSize(int dataIndex, float size)
         {
             _sizes[dataIndex] = size > 0f ? size : 0f;
+            InvalidateStartsAfter(dataIndex);
         }
 
         public float GetSize(int dataIndex) => _sizes[dataIndex];
 
+        /// <summary>아직 받지 않은 크기인지 (<see cref="InsertSizes"/>로 끼운 뒤 <see cref="SetSize"/> 전).</summary>
+        public bool IsSizeUnset(int dataIndex) => _sizes[dataIndex] < 0f;
+
+        /// <summary>
+        /// index 앞에 크기 count개 자리를 끼운다 (뒤쪽은 Array.Copy로 민다). 끼운 자리는 받지 않은 크기라 <see cref="Build"/> 전에 <see cref="SetSize"/>로 채운다.
+        /// 버퍼는 모자랄 때만 늘린다 (내용 유지). index는 [0, DataCount] 안이어야 한다.
+        /// </summary>
+        public void InsertSizes(int index, int count)
+        {
+            if (count <= 0)
+            {
+                return;
+            }
+
+            EnsureCapacityPreserving(DataCount + count);
+            Array.Copy(_sizes, index, _sizes, index + count, DataCount - index);
+            for (int i = index; i < index + count; i++)
+            {
+                _sizes[i] = UNSET_SIZE;
+            }
+
+            DataCount += count;
+            InvalidateStartsAfter(index);
+        }
+
+        /// <summary>[index, index + count) 크기를 빼고 뒤쪽을 당긴다. 구간은 [0, DataCount) 안이어야 한다.</summary>
+        public void RemoveSizes(int index, int count)
+        {
+            if (count <= 0)
+            {
+                return;
+            }
+
+            Array.Copy(_sizes, index + count, _sizes, index, DataCount - index - count);
+            DataCount -= count;
+            InvalidateStartsAfter(index);
+        }
+
+        /// <summary>fromIndex 크기를 빼서 toIndex 자리에 넣는다 (결과에서 그 크기는 toIndex에 있다). 두 인덱스는 [0, DataCount) 안이어야 한다.</summary>
+        public void MoveSize(int fromIndex, int toIndex)
+        {
+            if (fromIndex == toIndex)
+            {
+                return;
+            }
+
+            float size = _sizes[fromIndex];
+            if (fromIndex < toIndex)
+            {
+                Array.Copy(_sizes, fromIndex + 1, _sizes, fromIndex, toIndex - fromIndex);
+            }
+            else
+            {
+                Array.Copy(_sizes, toIndex, _sizes, toIndex + 1, fromIndex - toIndex);
+            }
+
+            _sizes[toIndex] = size;
+            InvalidateStartsAfter(Mathf.Min(fromIndex, toIndex));
+        }
+
         /// <summary>
         /// 크기를 다 넣은 뒤 호출한다. 루프 세트 수는 뷰포트·미리보기 길이에 따라 정한다.
         /// 한 사이클 길이가 0이면(셀 크기·간격이 모두 0) 루프를 끈다.
+        /// 간격이 그대로면 접두합은 마지막 Build 뒤 크기가 바뀐 가장 앞 자리부터만 다시 더한다 (처음부터 더한 것과 같은 값).
         /// </summary>
         public void Build(float spacing, float paddingBefore, float paddingAfter, bool loop,
             float viewportExtent, float lookAheadBefore = 0f, float lookAheadAfter = 0f)
         {
-            Spacing = Mathf.Max(0f, spacing);
+            spacing = Mathf.Max(0f, spacing);
+            if (spacing != Spacing)
+            {
+                _validStarts = 0;
+            }
+
+            Spacing = spacing;
             PaddingBefore = paddingBefore;
             PaddingAfter = paddingAfter;
 
-            float accumulated = 0f;
-            for (int i = 0; i < DataCount; i++)
+            // 처음부터 더할 때도 저장한 앞 항목 시작에 (앞 항목 크기 + 간격)을 더하므로, 바뀐 자리부터 이어 더해도 같은 float 값이 나온다.
+            int count = DataCount;
+            int start = Mathf.Min(_validStarts, count);
+            if (start == 0 && count > 0)
             {
-                _cycleStarts[i] = accumulated;
-                accumulated += _sizes[i] + Spacing;
+                _cycleStarts[0] = 0f;
+                start = 1;
             }
 
-            CycleExtent = accumulated;
+            for (int i = start; i < count; i++)
+            {
+                _cycleStarts[i] = _cycleStarts[i - 1] + (_sizes[i - 1] + Spacing);
+            }
+
+            _validStarts = count;
+            CycleExtent = count > 0 ? _cycleStarts[count - 1] + (_sizes[count - 1] + Spacing) : 0f;
             IsLoop = loop && DataCount > 0 && CycleExtent > 0f;
             SetCount = IsLoop
                 ? ComputeLoopSetCount(CycleExtent, viewportExtent, Spacing, lookAheadBefore, lookAheadAfter)
@@ -293,6 +378,35 @@ namespace CyKim.Scroller
 
             float nextStart = GetSlotStart(slot + 1);
             return position - end <= nextStart - position ? slot : slot + 1;
+        }
+
+        /// <summary>index 자리 크기가 바뀌었다. index번 시작까지는 그대로이고 그 뒤는 다음 Build가 다시 더한다.</summary>
+        private void InvalidateStartsAfter(int index)
+        {
+            if (index + 1 < _validStarts)
+            {
+                _validStarts = index + 1;
+            }
+        }
+
+        /// <summary>
+        /// 버퍼가 required보다 작으면 두 배 이상으로 늘리고 옛 버퍼를 통째로 옮긴다.
+        /// _validStarts는 DataCount보다 클 수 있으므로(끝 항목을 지운 직후면 DataCount번 시작도 맞은 값이다) [0, DataCount)만 옮기면 안 된다.
+        /// </summary>
+        private void EnsureCapacityPreserving(int required)
+        {
+            if (_sizes.Length >= required)
+            {
+                return;
+            }
+
+            int capacity = Mathf.Max(required, _sizes.Length * 2);
+            var sizes = new float[capacity];
+            var cycleStarts = new float[capacity];
+            Array.Copy(_sizes, sizes, _sizes.Length);
+            Array.Copy(_cycleStarts, cycleStarts, _cycleStarts.Length);
+            _sizes = sizes;
+            _cycleStarts = cycleStarts;
         }
     }
 }

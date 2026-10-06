@@ -418,7 +418,7 @@ namespace CyKim.Scroller
             }
         }
 
-        /// <summary>논리 데이터 개수 (마지막 로드 기준).</summary>
+        /// <summary>논리 데이터 개수 (마지막 로드·증분 변경 기준. 증분 변경 배치 중에는 배치 전 값).</summary>
         public int NumberOfCells => _layout.DataCount;
 
         /// <summary>스크롤 시퀀스 슬롯 개수. 루프면 데이터 개수 × 세트 수.</summary>
@@ -608,6 +608,12 @@ namespace CyKim.Scroller
 
         private void LateUpdate()
         {
+            if (_updateDepth > 0)
+            {
+                // 증분 변경 배치가 열려 있으면 아래 작업이 모두 미뤄진다. 프레임을 넘겨 열려 있으면 짝이 깨졌을 가능성이 크므로 알린다.
+                WarnIfUpdatesLeftOpen();
+            }
+
             FlushPendingWork();
 
             if (!_hasLoaded)
@@ -655,9 +661,12 @@ namespace CyKim.Scroller
         /// <summary>
         /// 델리게이트에서 개수·크기(와 항목 ID)를 다시 받아 처음부터 배치한다. 진행 중인 관성·트윈·점프 정렬은 멈춘다.
         /// 데이터·뷰포트가 준비되기 전에 <see cref="RestoreAnchor"/>로 보관한 앵커가 있으면 처음 대신 그 자리로 간다.
-        /// 델리게이트·셀 이벤트 콜백 안에서 불러도 된다 (범위 갱신이 끝난 뒤 처리).
+        /// 델리게이트·셀 이벤트 콜백 안에서 불러도 된다 (범위 갱신이 끝난 뒤 처리). 증분 변경 배치 중이면 <see cref="EndUpdates"/>에서 기록한 연산 대신 처리한다.
         /// </summary>
-        /// <remarks>데이터가 바뀌어도 보던 항목을 유지하려면 <see cref="ReloadDataKeepingPosition"/>이나 <see cref="ReloadData(ReloadAnchor, float)"/>를 쓴다.</remarks>
+        /// <remarks>
+        /// 데이터가 바뀌어도 보던 항목을 유지하려면 <see cref="ReloadDataKeepingPosition"/>이나 <see cref="ReloadData(ReloadAnchor, float)"/>를,
+        /// 바뀐 자리를 알면 <see cref="InsertCells"/>·<see cref="RemoveCells"/>·<see cref="MoveCell"/>을 쓴다.
+        /// </remarks>
         public void ReloadData()
         {
             RequestReload(ReloadAnchor.Factor, 0f);
@@ -679,7 +688,7 @@ namespace CyKim.Scroller
 
         /// <summary>
         /// 델리게이트에서 다시 읽고 anchor가 정한 위치로 간다. 진행 중인 관성·트윈·점프 정렬은 멈춘다.
-        /// 델리게이트·셀 이벤트 콜백 안에서 부르면 위치 기준까지 보관했다가 범위 갱신이 끝난 뒤 처리한다.
+        /// 델리게이트·셀 이벤트 콜백 안에서 부르면 위치 기준까지 보관했다가 범위 갱신이 끝난 뒤, 증분 변경 배치 중이면 <see cref="EndUpdates"/>에서 처리한다.
         /// </summary>
         /// <param name="anchor">
         /// Factor·Start·End는 위치를 정하므로 보관한 앵커(<see cref="RestoreAnchor"/>)를 버린다.
@@ -716,6 +725,8 @@ namespace CyKim.Scroller
         /// (그 항목이 지워졌으면 같은 인덱스). ID가 없으면 같은 데이터 인덱스를 유지하므로 셀 크기가 바뀌었거나 뒤쪽에 항목이 추가됐을 때 쓴다.</para>
         /// <para><see cref="ReloadData(ReloadAnchor, float)"/>와 달리 셀만 다시 배치하는 재배치라 진행 중인 트윈은 같은 항목(개수가 줄었으면 잘린 인덱스)을 향해 이어 가고,
         /// 점프·스냅 정렬은 ID가 있으면 같은 항목에 맞춘 채 유지한다 (ID가 없으면 정렬을 풀고 맨 앞 셀 기준으로 둔다).</para>
+        /// <para>모든 항목의 크기를 다시 받고 셀을 다시 바인딩한다. 바뀐 자리를 알면 <see cref="InsertCells"/>·<see cref="RemoveCells"/>·<see cref="MoveCell"/>이 그 자리만 반영한다.
+        /// 증분 변경 배치 중에 부르면 <see cref="EndUpdates"/>에서 기록한 연산 대신 처리한다 (위치 기준은 배치 전 화면).</para>
         /// </remarks>
         public void ReloadDataKeepingPosition()
         {
@@ -837,16 +848,21 @@ namespace CyKim.Scroller
         /// <summary>
         /// 활성 셀을 파괴한다. 셀 프리팹을 바꾼 뒤 <see cref="ReloadData()"/>와 함께 쓴다.
         /// 보이던 셀은 파괴 전에 <see cref="CellViewDidEndDisplay"/>를 받는다. 파괴할 셀은 바인딩을 푼다(<see cref="CyScrollerCellView.IsBound"/> false).
-        /// 델리게이트·이벤트 콜백 안에서 부르면 범위 갱신이 끝난 뒤 처리한다.
+        /// 델리게이트·이벤트 콜백 안에서 부르면 범위 갱신이 끝난 뒤, 증분 변경 배치 중이면 <see cref="EndUpdates"/>에서 처리한다.
         /// </summary>
         public void ClearActive()
         {
-            if (_inRangeUpdate)
+            if (_inRangeUpdate || _updateDepth > 0)
             {
                 _clearActivePending = true;
                 return;
             }
 
+            ClearActiveNow();
+        }
+
+        private void ClearActiveNow()
+        {
             EndDisplayAll();
 
             for (int i = 0; i < _activeCells.Count; i++)
@@ -866,16 +882,21 @@ namespace CyKim.Scroller
 
         /// <summary>
         /// 재활용 풀의 셀을 모두 파괴한다. 다시는 쓰지 않을 프리팹 종류를 정리할 때 쓴다.
-        /// 델리게이트·이벤트 콜백 안에서 부르면 범위 갱신이 끝난 뒤 처리한다.
+        /// 델리게이트·이벤트 콜백 안에서 부르면 범위 갱신이 끝난 뒤, 증분 변경 배치 중이면 <see cref="EndUpdates"/>에서 처리한다.
         /// </summary>
         public void ClearRecycled()
         {
-            if (_inRangeUpdate)
+            if (_inRangeUpdate || _updateDepth > 0)
             {
                 _clearRecycledPending = true;
                 return;
             }
 
+            ClearRecycledNow();
+        }
+
+        private void ClearRecycledNow()
+        {
             foreach (KeyValuePair<string, List<CyScrollerCellView>> pair in _pools)
             {
                 List<CyScrollerCellView> pool = pair.Value;
@@ -1033,10 +1054,11 @@ namespace CyKim.Scroller
 
         /// <summary>
         /// 콜백 안에서 미뤄 둔 정리·리로드·재배치를 처리한다. 리로드나 재배치를 했으면 범위도 이미 갱신됐으므로 true.
+        /// 증분 변경 배치 중에는 처리하지 않는다 (<see cref="EndUpdates"/>가 처리한다).
         /// </summary>
         private bool FlushPendingWork()
         {
-            if (_inRangeUpdate || !_initialized)
+            if (_inRangeUpdate || !_initialized || _updateDepth > 0)
             {
                 return false;
             }
@@ -1068,13 +1090,13 @@ namespace CyKim.Scroller
             if (_clearActivePending)
             {
                 _clearActivePending = false;
-                ClearActive();
+                ClearActiveNow();
             }
 
             if (_clearRecycledPending)
             {
                 _clearRecycledPending = false;
-                ClearRecycled();
+                ClearRecycledNow();
             }
         }
 
@@ -1083,8 +1105,8 @@ namespace CyKim.Scroller
         #region Reload
 
         /// <summary>
-        /// 리로드 요청 공통 경로. 범위 갱신(델리게이트·이벤트 콜백) 안이면 위치 기준까지 보관했다가 끝난 뒤 처리한다.
-        /// 보관한 앵커를 버릴지는 호출자가 정한다 (위치를 정한 요청만 버린다).
+        /// 리로드 요청 공통 경로. 범위 갱신(델리게이트·이벤트 콜백) 안이면 위치 기준까지 보관했다가 끝난 뒤,
+        /// 증분 변경 배치 중이면 <see cref="EndUpdates"/>에서 처리한다. 보관한 앵커를 버릴지는 호출자가 정한다 (위치를 정한 요청만 버린다).
         /// </summary>
         private void RequestReload(ReloadAnchor anchor, float factor)
         {
@@ -1093,7 +1115,7 @@ namespace CyKim.Scroller
                 return;
             }
 
-            if (_inRangeUpdate)
+            if (_inRangeUpdate || _updateDepth > 0)
             {
                 _reloadPending = true;
                 _pendingReloadAnchor = anchor;
@@ -1228,7 +1250,7 @@ namespace CyKim.Scroller
                 return;
             }
 
-            if (_inRangeUpdate)
+            if (_inRangeUpdate || _updateDepth > 0)
             {
                 _relayoutPending = true;
                 _relayoutRequery |= requeryDelegate;
@@ -1584,6 +1606,13 @@ namespace CyKim.Scroller
                 return;
             }
 
+            if (_updateDepth > 0)
+            {
+                // 증분 변경 배치 중이다. 델리게이트가 바뀌는 중일 수 있으므로 배치가 끝날 때 맞춘다.
+                _rangeUpdateDeferred = true;
+                return;
+            }
+
             // 델리게이트 교체·콜백 안 요청이 남아 있으면 옛 배치로 새 델리게이트를 부르지 않도록 먼저 처리한다.
             if (FlushPendingWork())
             {
@@ -1665,24 +1694,7 @@ namespace CyKim.Scroller
         /// </summary>
         private void ApplyActiveRangeAt(float position)
         {
-            float viewportSize = ScrollRectSize;
-            _layout.GetSlotRange(
-                position - _lookAheadBefore,
-                position + viewportSize + _lookAheadAfter,
-                out int first,
-                out int last);
-
-            if (last - first + 1 > MAX_ACTIVE_CELLS)
-            {
-                last = first + MAX_ACTIVE_CELLS - 1;
-                if (!_warnedActiveCap)
-                {
-                    _warnedActiveCap = true;
-                    Debug.LogWarning($"[CyScroller] 한 번에 활성화할 셀이 {MAX_ACTIVE_CELLS}개를 넘습니다. 셀 크기가 0에 가깝지 않은지 확인하세요.", this);
-                }
-            }
-
-            GetVisibleSlotRange(position, viewportSize, first, last, out int visibleFirst, out int visibleLast);
+            ComputeActiveRange(position, out int first, out int last, out int visibleFirst, out int visibleLast);
 
             bool activeChanged = first != _activeFirst || last != _activeLast;
             if (!activeChanged && IsSameRange(visibleFirst, visibleLast, _visibleFirst, _visibleLast))
@@ -1715,6 +1727,31 @@ namespace CyKim.Scroller
             {
                 _inRangeUpdate = false;
             }
+        }
+
+        /// <summary>
+        /// position에서 활성 슬롯 범위(뷰포트 + 미리보기 구간, <see cref="MAX_ACTIVE_CELLS"/>개까지)와 표시 범위(실제 뷰포트, 활성 범위로 자름). 할당 없음.
+        /// </summary>
+        private void ComputeActiveRange(float position, out int first, out int last, out int visibleFirst, out int visibleLast)
+        {
+            float viewportSize = ScrollRectSize;
+            _layout.GetSlotRange(
+                position - _lookAheadBefore,
+                position + viewportSize + _lookAheadAfter,
+                out first,
+                out last);
+
+            if (last - first + 1 > MAX_ACTIVE_CELLS)
+            {
+                last = first + MAX_ACTIVE_CELLS - 1;
+                if (!_warnedActiveCap)
+                {
+                    _warnedActiveCap = true;
+                    Debug.LogWarning($"[CyScroller] 한 번에 활성화할 셀이 {MAX_ACTIVE_CELLS}개를 넘습니다. 셀 크기가 0에 가깝지 않은지 확인하세요.", this);
+                }
+            }
+
+            GetVisibleSlotRange(position, viewportSize, first, last, out visibleFirst, out visibleLast);
         }
 
         /// <summary>
@@ -1856,6 +1893,18 @@ namespace CyKim.Scroller
         /// </summary>
         private CyScrollerCellView ActivateSlot(int slot, bool atFront)
         {
+            CyScrollerCellView cell = BindSlot(slot);
+
+            // 셀을 못 받았으면 슬롯과 목록 인덱스 대응을 유지하려고 빈 자리를 넣는다.
+            InsertActive(cell, atFront);
+            return cell;
+        }
+
+        /// <summary>
+        /// 슬롯의 셀 뷰를 델리게이트에서 받아 바인딩하고 배치한다. 못 받으면 null. 활성 목록에는 넣지 않는다 (호출자가 넣는다).
+        /// </summary>
+        private CyScrollerCellView BindSlot(int slot)
+        {
             int dataIndex = _layout.SlotToDataIndex(slot);
 
             _pendingDataIndex = dataIndex;
@@ -1880,8 +1929,6 @@ namespace CyKim.Scroller
                     Debug.LogError($"[CyScroller] GetCellView가 셀 뷰를 반환하지 않았습니다. dataIndex={dataIndex}", this);
                 }
 
-                // 슬롯과 목록 인덱스 대응을 유지하려고 빈 자리를 넣는다.
-                InsertActive(null, atFront);
                 return null;
             }
 
@@ -1910,7 +1957,6 @@ namespace CyKim.Scroller
                 cell.gameObject.SetActive(true);
             }
 
-            InsertActive(cell, atFront);
             return cell;
         }
 

@@ -48,7 +48,7 @@ namespace CyKim.Scroller
         /// <summary>
         /// 바인딩 세대. 스크롤러가 이 뷰를 데이터에 바인딩할 때(<see cref="CyScroller.GetCellView"/>가 활성화할 슬롯용으로 내줄 때)와
         /// 바인딩을 풀 때(풀로 돌려보낼 때, <see cref="CyScroller.ClearActive"/>로 파괴할 때, 활성인 채로 스크롤러와 함께 파괴될 때) 1씩 는다.
-        /// 같은 데이터로 남는 갱신(<see cref="RefreshCellView"/>, 루프 순환 보정)에는 늘지 않는다.
+        /// 같은 데이터로 남는 갱신(<see cref="RefreshCellView"/>, 루프 순환 보정, 증분 변경으로 인덱스만 바뀔 때(<see cref="OnDataIndexChanged"/>))에는 늘지 않는다.
         /// 스크롤러를 거치지 않고 셀을 직접 파괴하면 늘지 않는다.
         /// </summary>
         /// <example>
@@ -101,6 +101,16 @@ namespace CyKim.Scroller
 
         /// <summary>풀로 돌아가기 직전에 호출된다. 이전 데이터 상태를 정리할 때 쓴다.</summary>
         public virtual void OnRecycled()
+        {
+        }
+
+        /// <summary>
+        /// 증분 변경(<see cref="CyScroller.InsertCells"/>·<see cref="CyScroller.RemoveCells"/>·<see cref="CyScroller.MoveCell"/>)으로 다시 바인딩하지 않고
+        /// 같은 항목의 인덱스만 바뀌었을 때. <see cref="DataIndex"/>·<see cref="CellIndex"/>는 이미 새 값이고 <see cref="BindVersion"/>은 그대로다.
+        /// 이 호출 뒤에 새 위치로 옮겨진다. 인덱스를 화면에 그리는 셀은 여기서 다시 그린다.
+        /// </summary>
+        /// <param name="previousDataIndex">바뀌기 전 데이터 인덱스.</param>
+        protected internal virtual void OnDataIndexChanged(int previousDataIndex)
         {
         }
 
