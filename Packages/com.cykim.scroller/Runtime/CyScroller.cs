@@ -87,6 +87,14 @@ namespace CyKim.Scroller
         [Tooltip("셀 위치를 잴 셀 안의 지점. 0 = 앞, 0.5 = 가운데, 1 = 뒤.")]
         [SerializeField, Range(0f, 1f)] private float _cellPositionPivot = 0.5f;
 
+        [Header("Scroll State")]
+        [Tooltip("드래그·트윈·스냅 대기가 없고 스크롤 속도가 이 값(px/s) 이하이면 정착(IsSettled)으로 본다.")]
+        [SerializeField, Min(0f)] private float _settleVelocityThreshold = 10f;
+        [Tooltip("스크롤 속도가 뷰포트 길이 × 이 값(/s) 이상이 되면 고속 스크롤(IsFastScrolling)로 본다. 0이면 끈다.")]
+        [SerializeField, Min(0f)] private float _fastScrollEnterThreshold = 3f;
+        [Tooltip("고속 스크롤 중 속도가 뷰포트 길이 × 이 값(/s) 미만으로 떨어지면 끝난다. 들어가는 값보다 크면 들어가는 값을 쓴다.")]
+        [SerializeField, Min(0f)] private float _fastScrollExitThreshold = 1.5f;
+
         [Header("Reload")]
         [Tooltip("켜면 델리게이트가 항목 ID를 줄 때 위치를 지키는 리로드(FirstVisible·LastVisible·앵커 지정·ReloadDataKeepingPosition)가 " +
             "ID가 같은 활성 셀을 다시 바인딩하지 않고 새 인덱스로 옮겨 쓴다. 내용 변경은 감지하지 않으므로 바뀐 항목은 RefreshCells로 알린다.")]
@@ -686,6 +694,9 @@ namespace CyKim.Scroller
             }
 
             SetScrolling(_dragging || LinearVelocity != 0f);
+
+            // 정착·고속 스크롤 판단. 트윈 중이면 이번 걸음의 이동 속도, 아니면 관성 속도를 쓴다.
+            UpdateScrollState(ScrollSpeed);
 
             // 이번 프레임의 드래그·관성·트윈이 모두 반영된 뒤 셀 위치를 한 번 알린다.
             NotifyCellPositionsIfChanged();

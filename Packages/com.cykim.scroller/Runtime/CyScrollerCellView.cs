@@ -152,6 +152,15 @@ namespace CyKim.Scroller
         }
 
         /// <summary>
+        /// 움직이던 스크롤러가 정착했을 때(<see cref="CyScroller.ScrollerSettled"/> 바로 뒤) 활성 셀마다 한 번 불린다.
+        /// 고속 스크롤 중에 미뤄 둔 무거운 로드(이미지·동영상)를 정착한 뒤 시작하는 데 쓴다. 미리보기 구간 셀도 받는다(<see cref="IsDisplayed"/>로 구분).
+        /// </summary>
+        /// <remarks>정착 이벤트 핸들러가 다시 움직이게 했으면(트윈 시작 등) 이번에는 불리지 않고 다음 정착 때 불린다.</remarks>
+        protected internal virtual void OnScrollerSettled()
+        {
+        }
+
+        /// <summary>
         /// <see cref="CyScroller.NotifyCellPositions"/>가 켜져 있을 때 뷰포트 안 위치를 받는다. 위치·활성 범위·레이아웃·뷰포트 크기가 바뀐 프레임에
         /// 한 번(스크롤러 LateUpdate 끝) 불리고, 새로 활성화된 셀은 활성화 즉시 한 번 더 받는다.
         /// </summary>
