@@ -46,6 +46,8 @@ namespace CyKim.Scroller.Editor
                 EditorGUILayout.FloatField("Linear Velocity", scroller.LinearVelocity);
                 EditorGUILayout.Toggle("Scrolling", scroller.IsScrolling);
                 EditorGUILayout.Toggle("Tweening", scroller.IsTweening);
+                EditorGUILayout.Toggle("Settled", scroller.IsSettled);
+                EditorGUILayout.Toggle("Fast Scrolling", scroller.IsFastScrolling);
             }
 
             EditorGUILayout.Space();

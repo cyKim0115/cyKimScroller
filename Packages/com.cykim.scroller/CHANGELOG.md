@@ -11,11 +11,19 @@
 - `ResizeAnchor`(Auto·Start·End): Auto는 다른 증분 변경과 같은 위치 보존, Start·End는 그 셀의 위·아래 가장자리를 화면에 고정한다. 결과는 스크롤 범위로 자른다
 - 셀 뷰 `RequestResize(duration, tweenType, anchor)`: 그 셀의 `DataIndex`로 `ResizeCellView`를 부른다
 - Profiler 마커 `CyScroller.Resize` (크기 애니메이션 한 걸음)
+- 정착 상태 `IsSettled`와 `ScrollerSettled`(`ScrollerSettledHandler`): 드래그 중이 아니고 트윈·스냅 대기가 없고 스크롤 속도가 `SettleVelocityThreshold`(기본 10px/s) 이하이면 정착이다.
+  정착하지 않은 상태에서 정착으로 바뀔 때 LateUpdate 끝에서 한 번 알리고(첫 로드 직후 제외), 그 뒤에도 정착해 있으면 활성 셀마다 `CyScrollerCellView.OnScrollerSettled()`를 부른다
+- 고속 스크롤 `IsFastScrolling`과 `ScrollerFastScrollingChanged`(`ScrollerFastScrollingChangedHandler`): 스크롤 속도(트윈이면 트윈 이동 속도, 아니면 관성 속도)가
+  뷰포트 길이 × `FastScrollEnterThreshold`(기본 3)/s 이상이면 켜지고 × `FastScrollExitThreshold`(기본 1.5)/s 미만이면 꺼진다 (히스테리시스, 들어가는 값 0이면 끔)
+- 인스펙터 Runtime 영역에 Settled·Fast Scrolling 표시
 
 ### Changed
 - 크기 애니메이션의 중간 걸음은 레이아웃 접두합을 다시 더하지 않고 그 뒤 항목 위치에 변화량을 더해 계산한다. 10만 항목의 맨 앞 항목을 애니메이션해도 걸음마다 항목 수와 무관하게 활성 셀 수만큼 들고,
   마지막 걸음이나 다른 크기·개수 변경 때 바뀐 자리부터 한 번 다시 더한다
 - 루프 모드에서 크기 변경(과 내용 갱신)만 있는 배치는 전체 리로드 대신 위치를 지키는 재배치로 맞춘다 (진행 중인 트윈·점프 정렬을 이어 간다. 애니메이션 없이 바로 바꾸고 활성 셀은 다시 바인딩한다)
+
+### Fixed
+- 데이터가 0개일 때 `Snap()`(드래그·휠 뒤 자동 스냅 포함)이 스냅 대기를 풀지 않아, 나중에 데이터가 생기면 사용자 입력 없이 스냅하던 문제. 이제 맞출 셀이 없어도 대기를 푼다
 
 ## [0.2.1] - 2026-10-06
 

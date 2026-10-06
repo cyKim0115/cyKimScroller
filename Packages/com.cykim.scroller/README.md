@@ -18,6 +18,7 @@ uGUI `ScrollRect` 위에서 동작하는 가상화 스크롤러. 보이는 구�
 - 키 유지 리로드(`PreserveCellsById`, 옵트인): 바뀐 자리를 모를 때 위치를 지키며 다시 읽어도 항목 ID가 같은 셀은 다시 바인딩하지 않고 새 자리로 옮긴다
 - 셀 크기 변경: `ResizeCellView`는 셀을 다시 바인딩하지 않고 크기만 바꾼다(바로 또는 애니메이션). 셀 위·아래 가장자리나 보던 화면을 지키고,
   애니메이션 중간 걸음은 접두합을 다시 더하지 않아 항목 수와 무관하게 활성 셀 수만큼 든다
+- 정착·고속 스크롤 상태: 움직임이 모두 끝났을 때 한 번 오는 `ScrollerSettled`(셀마다 `OnScrollerSettled`)와 히스테리시스를 둔 `IsFastScrolling`으로 무거운 로드를 미룬다
 - 스크롤 핫패스 GC 할당 0 (PlayMode 테스트로 검증, 셀 훅을 켠 상태 포함)
 
 Unity 6000.0 이상, uGUI 2.0 이상 (6000.6.0f1 / uGUI 2.6.0에서 검증).
@@ -106,13 +107,14 @@ public class ItemCellView : CyScrollerCellView
 | 크기 변경 | `ResizeCellView(dataIndex, duration, tweenType, anchor)`, `ResizeAnchor`(Auto·Start·End), `IsResizing` |
 | 이동 | `JumpToDataIndex(dataIndex, scrollerOffset, cellOffset, useSpacing, tweenType, tweenTime, onComplete, loopJumpDirection)`, `ScrollIntoView(dataIndex, align, margin, tweenType, tweenTime, onComplete, loopJumpDirection)`, `Snap()`, `InterruptTween()`, `GetJumpTargetPosition(...)` |
 | 위치 | `ScrollPosition`, `NormalizedScrollPosition`, `ScrollSize`, `ScrollRectSize`, `ContentSize`, `Velocity`, `LinearVelocity` |
+| 상태 | `IsScrolling`, `IsTweening`, `IsDragging`, `IsSettled`, `IsFastScrolling`, `SettleVelocityThreshold`, `FastScrollEnterThreshold`, `FastScrollExitThreshold` |
 | 범위 | `NumberOfCells`, `NumberOfCellSlots`, `StartDataIndex`/`EndDataIndex`, `StartCellViewIndex`/`EndCellViewIndex`, `ActiveCellViews`, `GetCellViewAtDataIndex`, `GetCellViewAtCellIndex`, `IsDataIndexFullyVisible(dataIndex, margin)` |
 | 좌표 | `GetCellStart`, `GetCellSize`, `GetScrollPositionForDataIndex`, `GetScrollPositionForCellViewIndex`, `GetCellViewIndexAtPosition`, `GetDataIndexForCellViewIndex` |
 | 루프 | `Loop`, `LoopWhileDragging`, `ToggleLoop()`, `IgnoreLoopJump(bool)` |
 | 정리 | `ClearActive()`, `ClearRecycled()`, `ClearAll()`, `GetRecycledCellCount()` |
-| 이벤트 | `CellViewVisibilityChanged`, `CellViewWillDisplay`, `CellViewDidEndDisplay`, `CellViewPositionChanged`, `CellViewInstantiated`, `CellViewReused`, `CellViewWillRecycle`, `ScrollerScrolled`, `ScrollerSnapped`, `ScrollerScrollingChanged`, `ScrollerTweeningChanged` |
+| 이벤트 | `CellViewVisibilityChanged`, `CellViewWillDisplay`, `CellViewDidEndDisplay`, `CellViewPositionChanged`, `CellViewInstantiated`, `CellViewReused`, `CellViewWillRecycle`, `ScrollerScrolled`, `ScrollerSnapped`, `ScrollerScrollingChanged`, `ScrollerTweeningChanged`, `ScrollerSettled`, `ScrollerFastScrollingChanged` |
 | 위치 훅 | `NotifyCellPositions`, `CellPositionPivot` |
-| 셀 뷰 | `DataIndex`, `CellIndex`, `ItemId`, `HasItemId`, `Active`, `IsBound`, `IsDisplayed`, `BindVersion`, `RefreshCellView()`, `RefreshCellView(changeMask)`, `RequestResize(duration, tweenType, anchor)`, `OnRecycled()`, `OnBecameVisible()`, `OnBecameHidden()`, `OnViewportPositionChanged(normalizedOffset)`, `OnDataIndexChanged(previousDataIndex)` |
+| 셀 뷰 | `DataIndex`, `CellIndex`, `ItemId`, `HasItemId`, `Active`, `IsBound`, `IsDisplayed`, `BindVersion`, `RefreshCellView()`, `RefreshCellView(changeMask)`, `RequestResize(duration, tweenType, anchor)`, `OnRecycled()`, `OnBecameVisible()`, `OnBecameHidden()`, `OnViewportPositionChanged(normalizedOffset)`, `OnDataIndexChanged(previousDataIndex)`, `OnScrollerSettled()` |
 
 `scrollerOffset` / `cellOffset`은 0 = 앞(위·왼쪽), 0.5 = 가운데, 1 = 뒤. 가운데 정렬은 `JumpToDataIndex(i, 0.5f, 0.5f)`.
 
@@ -144,6 +146,53 @@ public class CardCellView : CyScrollerCellView
 ```
 
 비동기 로드(아이콘·썸네일)는 바인딩할 때 `BindVersion`을 기억해 두고, 끝났을 때 값이 다르면(그사이 재활용·재바인딩되거나 스크롤러와 함께 파괴됨) 결과를 버린다.
+
+### 정착과 고속 스크롤
+
+빠르게 지나가는 셀의 무거운 로드(썸네일·동영상)는 미뤘다가 스크롤이 멈춘 뒤 시작할 수 있다.
+
+| | 언제 |
+|---|---|
+| `ScrollerScrollingChanged` / `IsScrolling` | 드래그·관성 이동이 시작·끝날 때 (트윈 제외) |
+| `ScrollerTweeningChanged` / `IsTweening` | 점프·스냅 트윈이 시작·끝날 때 |
+| `ScrollerSettled` / `IsSettled` | 드래그·관성·트윈·스냅 대기가 모두 끝나 정착했을 때 한 번 (관성이 `SettleVelocityThreshold` 이하로 느려지면 정착으로 본다) |
+| `ScrollerFastScrollingChanged` / `IsFastScrolling` | 스크롤 속도가 뷰포트 길이 × `FastScrollEnterThreshold`(기본 3)/s 이상이 되거나 × `FastScrollExitThreshold`(기본 1.5)/s 미만으로 떨어질 때 |
+
+```csharp
+public class ThumbnailCellView : CyScrollerCellView
+{
+    private Item _item;
+    private bool _loaded;
+
+    public void SetData(Item item)
+    {
+        _item = item;
+        _loaded = false;
+        ShowPlaceholder();
+        if (!Scroller.IsFastScrolling)
+        {
+            LoadThumbnail();   // 천천히 지나가면 바로 불러온다
+        }
+    }
+
+    // 정착하면 활성 셀마다 한 번 불린다. 고속 스크롤 중에 미룬 로드를 시작한다.
+    protected override void OnScrollerSettled()
+    {
+        if (!_loaded)
+        {
+            LoadThumbnail();
+        }
+    }
+}
+```
+
+- 정착 이벤트는 정착하지 않은 상태에서 정착으로 바뀔 때 LateUpdate 끝에서 한 번 오고, 첫 로드 직후에는 오지 않는다. 이벤트 뒤에도 정착해 있으면 활성 셀(미리보기 구간 포함)마다 `OnScrollerSettled`를 부른다.
+  핸들러가 다시 움직이게 했으면(트윈 시작 등) 셀에는 다음 정착 때 알린다.
+- 속도는 트윈 중이면 트윈 이동 속도, 아니면 ScrollRect 관성 속도다. ScrollRect의 inertia를 끄면 드래그 중 속도는 0이고,
+  휠·스크롤바 이동은 ScrollRect가 속도 없이 위치만 바꾸므로 정착으로 본다(스냅을 켜면 휠 뒤 스냅 대기 동안은 정착이 아니다).
+- 가장자리 너머(Elastic)에서 되돌아오는 동안은 정착이 아니다. 되돌아오는 꼭짓점에서 속도가 0을 지나도 범위 안으로 돌아온 뒤 한 번만 정착한다.
+- `FastScrollExitThreshold`가 `FastScrollEnterThreshold`보다 크면 들어가는 값을 쓰고, 0이면 완전히 멈출 때 고속 스크롤이 끝난다. `FastScrollEnterThreshold`가 0이면 고속 스크롤을 끈다.
+- 두 상태 모두 스크롤러가 꺼져 있는 동안에는 갱신하지 않고, 다시 켜진 뒤 LateUpdate에서 맞춘다.
 
 ### 항목 ID와 위치 앵커
 
@@ -489,7 +538,7 @@ private void OnListArrived(List<Message> latest)
   - 스크롤러 LateUpdate 뒤(더 늦은 실행 순서의 LateUpdate·코루틴 등)에서 위치가 바뀌면 다음 프레임 LateUpdate에 반영된다.
   - 아무것도 바뀌지 않은 프레임에는 부르지 않고, 꺼져 있으면 계산 자체를 건너뛴다. 뷰포트 길이가 0이면 부르지 않는다. 레이아웃 캐시로만 계산해 할당이 없다.
   - 셀 루트 RectTransform은 스크롤러가 배치하므로 위치 훅에서는 자식(스케일·회전·투명도)만 바꾼다.
-- 셀 뷰 훅(`OnBecameVisible`·`OnBecameHidden`·`OnViewportPositionChanged`·`OnDataIndexChanged`)은 `protected internal`이다. 다른 어셈블리에서는 `protected override`로 재정의한다.
+- 셀 뷰 훅(`OnBecameVisible`·`OnBecameHidden`·`OnViewportPositionChanged`·`OnDataIndexChanged`·`OnScrollerSettled`)은 `protected internal`이다. 다른 어셈블리에서는 `protected override`로 재정의한다.
 
 ## 샘플
 
