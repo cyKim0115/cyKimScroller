@@ -98,6 +98,7 @@ Package Manager → CyKim Scroller → Samples → **Basic** Import → 빈 씬�
 Packages/com.cykim.scroller/   패키지 본체 (Runtime · Editor · Tests · Samples~ · Documentation~)
 Assets/Dev/                    이 저장소 전용 개발·검증 씬
 docs/                          설계 조사 · 로드맵 · README 이미지
+tools/                         샘플 임시 텍스처 생성 스크립트
 ```
 
 ## 설계 참고

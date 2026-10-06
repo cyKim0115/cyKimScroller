@@ -13,7 +13,10 @@ namespace CyKim.Scroller.Samples.Basic
         private const float EDGE_ANGLE = 64f;
         private const float MAX_DISTANCE = 1.2f;
         private const float EDGE_SCALE = 0.72f;
-        private const float EDGE_ALPHA = 0.18f;
+
+        // 밝은 패널 위에서 가운데 ±2행 숫자가 3:1(굵은 큰 글자 기준) 이상 남는 값 (Linear 색 공간 기준 약 3.2).
+        // 그보다 먼 행은 원통 끝으로 사라지듯 더 흐려진다.
+        private const float EDGE_ALPHA = 0.45f;
 
         [SerializeField] private RectTransform _visual;
         [SerializeField] private CanvasGroup _group;

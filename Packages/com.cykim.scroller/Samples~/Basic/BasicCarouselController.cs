@@ -37,7 +37,8 @@ namespace CyKim.Scroller.Samples.Basic
             for (int i = 0; i < _cardCount; i++)
             {
                 _labels[i] = $"Card {i}";
-                _colors[i] = Color.HSVToRGB((float)i / _cardCount, 0.45f, 0.95f);
+                // 카드 톤 4가지를 차례로 돌려 쓴다. 기본 12장은 4로 나누어떨어져 순환 이음매(마지막 → 처음)에서도 이웃 톤이 다르다.
+                _colors[i] = SampleUiFactory.GetCardTone(i);
             }
 
             _onJumpComplete = OnJumpComplete;

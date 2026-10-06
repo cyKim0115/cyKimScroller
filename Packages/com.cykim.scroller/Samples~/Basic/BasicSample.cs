@@ -98,7 +98,7 @@ namespace CyKim.Scroller.Samples.Basic
             RectTransform body = SampleUiFactory.CreateSection("List Section", root,
                 new Vector2(0.025f, 0.33f), new Vector2(0.405f, 0.905f), "VERTICAL LIST  ·  500 items, variable heights");
 
-            CyScroller scroller = SampleUiFactory.CreateScroller("Vertical List", body, ScrollDirection.Vertical, SampleUiFactory.PanelColor);
+            CyScroller scroller = SampleUiFactory.CreateScroller("Vertical List", body, ScrollDirection.Vertical, SampleUiFactory.SurfaceColor);
             SampleUiFactory.Stretch((RectTransform)scroller.transform, 0f);
             scroller.Spacing = 8f;
             scroller.Padding = new RectOffset(14, 14, 14, 14);
@@ -134,9 +134,10 @@ namespace CyKim.Scroller.Samples.Basic
             AddButton(body, "List: Random", () => _list.JumpTo(Random.Range(0, _list.ItemCount)));
 
             // 편집: 증분 변경(InsertCells·RemoveCells·MoveCell)으로 알려 남은 셀을 다시 바인딩하지 않고 보던 화면을 지킨다.
-            AddButton(body, "List: Insert 3 at top", () => EditList(0));
-            AddButton(body, "List: Remove first visible", () => EditList(1));
-            AddButton(body, "List: Move visible to top", () => EditList(2));
+            // 데이터를 바꾸는 버튼이라 주 버튼(강조색)으로 구분한다.
+            AddButton(body, "List: Insert 3 at top", () => EditList(0), SampleUiFactory.ButtonStyle.Primary);
+            AddButton(body, "List: Remove first visible", () => EditList(1), SampleUiFactory.ButtonStyle.Primary);
+            AddButton(body, "List: Move visible to top", () => EditList(2), SampleUiFactory.ButtonStyle.Primary);
 
             AddButton(body, "Carousel: Previous", () => _carousel.Previous());
             AddButton(body, "Carousel: Next", () => _carousel.Next());
@@ -174,7 +175,7 @@ namespace CyKim.Scroller.Samples.Basic
             RectTransform body = SampleUiFactory.CreateSection("Wheel Section", root,
                 new Vector2(0.645f, 0.33f), new Vector2(0.975f, 0.905f), "WHEEL PICKER  ·  loop + center snap + position hook");
 
-            CyScroller scroller = SampleUiFactory.CreateScroller("Wheel Picker", body, ScrollDirection.Vertical, SampleUiFactory.PanelColor);
+            CyScroller scroller = SampleUiFactory.CreateScroller("Wheel Picker", body, ScrollDirection.Vertical, SampleUiFactory.SurfaceColor);
             SampleUiFactory.Place((RectTransform)scroller.transform, new Vector2(0f, 0.06f), new Vector2(0.56f, 0.94f));
             scroller.ScrollRect.scrollSensitivity = BasicWheelPickerController.ROW_HEIGHT;
             SampleUiFactory.CreateCenterHighlight(scroller, BasicWheelPickerController.ROW_HEIGHT, "min");
@@ -212,7 +213,7 @@ namespace CyKim.Scroller.Samples.Basic
                 new Vector2(0.025f, 0.035f), new Vector2(0.975f, 0.3f), "CAROUSEL  ·  loop + center snap + position hook");
             _carouselStatus = SampleUiFactory.CreateCaptionStatus(body);
 
-            CyScroller scroller = SampleUiFactory.CreateScroller("Loop Carousel", body, ScrollDirection.Horizontal, SampleUiFactory.PanelColor);
+            CyScroller scroller = SampleUiFactory.CreateScroller("Loop Carousel", body, ScrollDirection.Horizontal, SampleUiFactory.SurfaceColor);
             SampleUiFactory.Stretch((RectTransform)scroller.transform, 0f);
             scroller.Spacing = 20f;
             scroller.Padding = new RectOffset(0, 0, 18, 18);
@@ -223,9 +224,10 @@ namespace CyKim.Scroller.Samples.Basic
             _carousel.CardCentered += OnCardCentered;
         }
 
-        private static void AddButton(RectTransform panel, string label, UnityEngine.Events.UnityAction onClick)
+        private static void AddButton(RectTransform panel, string label, UnityEngine.Events.UnityAction onClick,
+            SampleUiFactory.ButtonStyle style = SampleUiFactory.ButtonStyle.Secondary)
         {
-            Button button = SampleUiFactory.CreateButton(label, panel, onClick);
+            Button button = SampleUiFactory.CreateButton(label, panel, onClick, style);
             button.gameObject.AddComponent<LayoutElement>().preferredHeight = BUTTON_HEIGHT;
         }
 
