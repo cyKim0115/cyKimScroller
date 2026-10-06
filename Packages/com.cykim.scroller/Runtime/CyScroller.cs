@@ -473,6 +473,7 @@ namespace CyKim.Scroller
                     return;
                 }
 
+                RecoverBeforeMove();
                 CancelTween();
                 _alignmentActive = false;
                 _snapArmed = false;
@@ -506,6 +507,7 @@ namespace CyKim.Scroller
                     return;
                 }
 
+                RecoverBeforeMove();
                 ScrollPosition = GetPositionForFactor(value);
             }
         }
@@ -1209,14 +1211,26 @@ namespace CyKim.Scroller
 
             // 회수 콜백이 위치를 바꿨어도 바뀐 화면을 기준으로 삼도록 셀부터 회수한 뒤 읽는다.
             // 보관한 앵커가 있으면 그쪽이 가려던 자리이므로 지금 화면 대신 그 앵커를 쓴다.
+            // 다시 읽다 멈춘 배치(키 유지 리로드·재배치의 복구)에서는 화면 항목을 읽을 수 없다. 보관한 앵커(다시 읽기 전 화면)를
+            // 이동 요청(배치 안의 ScrollPosition 대입, 회수 콜백 등)이 버렸으면 그 요청이 옮긴 콘텐츠 위치를 지킨다.
             bool keepVisible = !_hasPendingAnchor && (anchor == ReloadAnchor.FirstVisible || anchor == ReloadAnchor.LastVisible);
+            bool keepPosition = keepVisible && _rebuildFailed;
+            keepVisible &= !keepPosition;
+            float position = ReadPosition(_appliedVertical);
             float overscroll = 0f;
             CyScrollerAnchor visible = keepVisible ? CaptureLayoutAnchor(anchor == ReloadAnchor.LastVisible, out overscroll) : default;
 
             RebuildLayout(true);
             _hasLoaded = true;
             _lastViewportExtent = ScrollRectSize;
-            MoveAfterReload(anchor, factor, keepVisible, in visible, overscroll);
+            if (keepPosition)
+            {
+                MoveContentTo(Mathf.Clamp(position, 0f, ScrollSize));
+            }
+            else
+            {
+                MoveAfterReload(anchor, factor, keepVisible, in visible, overscroll);
+            }
 
             UpdateActiveRange();
             ApplyScrollbarVisibility();
@@ -1271,6 +1285,9 @@ namespace CyKim.Scroller
                 }
 
                 RebuildItemIds(count);
+
+                // 끝까지 다시 읽었다. 다시 읽다 멈춰 반쯤 읽힌 배치였어도 이제 맞다 (아래 Build는 사용자 코드를 부르지 않는다).
+                _rebuildFailed = false;
             }
 
             GetMainAxisPadding(out float paddingBefore, out float paddingAfter);
@@ -1734,6 +1751,12 @@ namespace CyKim.Scroller
             // 델리게이트 교체·콜백 안 요청이 남아 있으면 옛 배치로 새 델리게이트를 부르지 않도록 먼저 처리한다.
             if (FlushPendingWork())
             {
+                return;
+            }
+
+            if (_rebuildFailed)
+            {
+                // 다시 읽다 멈춘 배치다(복구 리로드가 아직 다시 읽기 전, 그 리로드의 회수 콜백 안 등). 반쯤 읽은 배치로 범위를 맞추지 않고 다시 읽은 뒤 맞춘다.
                 return;
             }
 

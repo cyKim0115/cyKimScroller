@@ -276,8 +276,9 @@ namespace CyKim.Scroller
                 }
             }
 
-            if (_layout.SlotCount == 0)
+            if (_layout.SlotCount == 0 || _rebuildFailed)
             {
+                // 다시 읽다 멈춘 배치는 개수·접두합·항목 ID가 서로 맞지 않아 화면 항목을 읽을 수 없다.
                 return anchor;
             }
 

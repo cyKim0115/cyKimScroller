@@ -240,6 +240,7 @@ namespace CyKim.Scroller
         /// </remarks>
         public void Snap()
         {
+            RecoverBeforeMove();
             _hasPendingAnchor = false;
             if (!_hasLoaded || _layout.SlotCount == 0)
             {
@@ -319,6 +320,7 @@ namespace CyKim.Scroller
                 return false;
             }
 
+            RecoverBeforeMove();
             _hasPendingAnchor = false;
 
             if (!_hasLoaded && !_reloadPending)
