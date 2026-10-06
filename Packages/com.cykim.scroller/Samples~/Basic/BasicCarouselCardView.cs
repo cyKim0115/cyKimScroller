@@ -8,8 +8,11 @@ namespace CyKim.Scroller.Samples.Basic
     /// </summary>
     public class BasicCarouselCardView : BasicCellView
     {
+        // 멀리 있는 카드는 주로 작게(스케일) 물러나 보이게 하고, 투명도는 조금만 낮춘다.
+        // 밝은 패널 위에서는 투명도가 낮을수록 글자가 빨리 씻겨 나간다. 샘플 기본 배치에서 스냅된 상태로 보이는 모든 카드 글자가
+        // 카드 면 대비 3:1(굵은 큰 글자 기준) 이상 남는 값이다 (Linear 색 공간 기준, 가장자리 카드 약 3.1).
         private const float EDGE_SCALE = 0.72f;
-        private const float EDGE_ALPHA = 0.4f;
+        private const float EDGE_ALPHA = 0.76f;
 
         [SerializeField] private CanvasGroup _group;
 

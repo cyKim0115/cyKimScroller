@@ -55,14 +55,14 @@ namespace CyKim.Scroller.Samples.Basic
 
         private static Item CreateItem(int id)
         {
-            // 60~180 사이 높이를 번호로 결정적으로 섞는다.
+            // 60~180 사이 높이를 번호로 결정적으로 섞는다. 면 색은 번호마다 다음 세이지 톤으로 돌아간다.
             float height = 60f + (id * 37 % 5) * 30f;
             return new Item
             {
                 Id = id,
                 Height = height,
                 Label = $"Item #{id}  (height {height:0})",
-                Color = Color.HSVToRGB(id * 0.013f % 1f, 0.35f, 0.95f),
+                Color = SampleUiFactory.GetSageTone(id),
             };
         }
 
