@@ -181,7 +181,7 @@ public class CardCellView : CyScrollerCellView
 |---|---|
 | `ScrollerScrollingChanged` / `IsScrolling` | 드래그·관성 이동이 시작·끝날 때 (트윈 제외) |
 | `ScrollerTweeningChanged` / `IsTweening` | 점프·스냅 트윈이 시작·끝날 때 |
-| `ScrollerSettled` / `IsSettled` | 드래그·관성·트윈·스냅 대기가 모두 끝나 정착했을 때 한 번 (관성이 `SettleVelocityThreshold` 이하로 느려지면 정착으로 본다) |
+| `ScrollerSettled` / `IsSettled` | 드래그·관성·트윈·스냅 대기·크기 애니메이션이 모두 끝나 정착했을 때 한 번 (관성이 `SettleVelocityThreshold` 이하로 느려지면 정착으로 본다) |
 | `ScrollerFastScrollingChanged` / `IsFastScrolling` | 스크롤 속도가 뷰포트 길이 × `FastScrollEnterThreshold`(기본 3)/s 이상이 되거나 × `FastScrollExitThreshold`(기본 1.5)/s 미만으로 떨어질 때 |
 
 ```csharp
@@ -217,6 +217,8 @@ public class ThumbnailCellView : CyScrollerCellView
 - 속도는 트윈 중이면 트윈 이동 속도, 아니면 ScrollRect 관성 속도다. ScrollRect의 inertia를 끄면 드래그 중 속도는 0이고,
   휠·스크롤바 이동은 ScrollRect가 속도 없이 위치만 바꾸므로 정착으로 본다(스냅을 켜면 휠 뒤 스냅 대기 동안은 정착이 아니다).
 - 가장자리 너머(Elastic)에서 되돌아오는 동안은 정착이 아니다. 되돌아오는 꼭짓점에서 속도가 0을 지나도 범위 안으로 돌아온 뒤 한 번만 정착한다.
+- 크기 애니메이션(`ResizeCellView`에 시간을 준 요청)이 도는 동안도 정착이 아니다(화면 밖 항목 포함). 끝난 프레임에 정착 이벤트가 오므로, 펼친 셀의 무거운 로드도 정착 뒤로 미룰 수 있다.
+  정착 핸들러에서 크기 애니메이션을 시작하면 셀에는 애니메이션이 끝난 뒤 알린다.
 - `FastScrollExitThreshold`가 `FastScrollEnterThreshold`보다 크면 들어가는 값을 쓰고, 0이면 완전히 멈출 때 고속 스크롤이 끝난다. `FastScrollEnterThreshold`가 0이면 고속 스크롤을 끈다.
 - 두 상태 모두 스크롤러가 꺼져 있는 동안에는 갱신하지 않고, 다시 켜진 뒤 LateUpdate에서 맞춘다.
 
@@ -406,7 +408,7 @@ public void Toggle(int dataIndex)
 | `End` | 그 셀의 끝(아래·오른쪽) 가장자리. 셀은 위·왼쪽으로 늘어나거나 줄어든다 |
 
 - 결과는 스크롤 범위로 자른다. 점프·스냅·`ScrollIntoView` 정렬이 유지되는 중이면 정렬이 먼저이고, 진행 중인 트윈은 새 배치의 목표로 이어 가 완료 콜백을 한 번 부른다.
-- 애니메이션은 LateUpdate에서 매 프레임 크기를 바꾸고 기준에 맞춰 위치를 옮긴다(드래그 중이면 손가락 기준점도). `IsResizing`이 진행 여부다.
+- 애니메이션은 LateUpdate에서 매 프레임 크기를 바꾸고 기준에 맞춰 위치를 옮긴다(드래그 중이면 손가락 기준점도). `IsResizing`이 진행 여부이고, 진행 중에는 정착이 아니다([정착과 고속 스크롤](#정착과-고속-스크롤)).
   같은 항목에 새 요청이 오면 지금 크기에서 이어 가고, 그 항목이 지워지거나 `ReloadCellView`·리로드로 크기를 다시 읽으면 애니메이션을 버리고 그 크기를 따른다.
 - 크기의 기준은 계속 델리게이트다. 크기 값을 직접 받는 메서드는 없다(다음 리로드 때 델리게이트 값으로 돌아가지 않게).
 - 루프 모드에서는 애니메이션 없이 바로 바꾸고 위치를 지키는 재배치로 맞춘다(활성 셀을 다시 바인딩하고 기준은 `Auto`).
