@@ -1,6 +1,6 @@
 ---
 description: "펼치기·접기처럼 크기만 바뀐 셀을 다시 바인딩하지 않고 바로 또는 애니메이션으로 바꾼다"
-icon: arrows-up-down
+icon: expand
 ---
 
 # 셀 크기 변경
