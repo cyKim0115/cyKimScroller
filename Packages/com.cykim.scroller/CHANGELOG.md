@@ -2,6 +2,18 @@
 
 이 패키지의 변경 내역. 형식은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/), 버전은 [SemVer](https://semver.org/lang/ko/)를 따른다.
 
+## [Unreleased]
+
+### Added
+- 정착 상태 `IsSettled`와 `ScrollerSettled`(`ScrollerSettledHandler`): 드래그 중이 아니고 트윈·스냅 대기가 없고 스크롤 속도가 `SettleVelocityThreshold`(기본 10px/s) 이하이면 정착이다.
+  정착하지 않은 상태에서 정착으로 바뀔 때 LateUpdate 끝에서 한 번 알리고(첫 로드 직후 제외), 그 뒤에도 정착해 있으면 활성 셀마다 `CyScrollerCellView.OnScrollerSettled()`를 부른다
+- 고속 스크롤 `IsFastScrolling`과 `ScrollerFastScrollingChanged`(`ScrollerFastScrollingChangedHandler`): 스크롤 속도(트윈이면 트윈 이동 속도, 아니면 관성 속도)가
+  뷰포트 길이 × `FastScrollEnterThreshold`(기본 3)/s 이상이면 켜지고 × `FastScrollExitThreshold`(기본 1.5)/s 미만이면 꺼진다 (히스테리시스, 들어가는 값 0이면 끔)
+- 인스펙터 Runtime 영역에 Settled·Fast Scrolling 표시
+
+### Fixed
+- 데이터가 0개일 때 `Snap()`(드래그·휠 뒤 자동 스냅 포함)이 스냅 대기를 풀지 않아, 나중에 데이터가 생기면 사용자 입력 없이 스냅하던 문제. 이제 맞출 셀이 없어도 대기를 푼다
+
 ## [0.2.1] - 2026-10-06
 
 ### Changed

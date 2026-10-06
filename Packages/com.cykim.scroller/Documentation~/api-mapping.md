@@ -49,6 +49,8 @@
 | 늦은 비동기 결과 버리기 | `BindVersion` (바인딩 때 기억, 끝날 때 비교), `IsBound` | `prepareForReuse()`에서 작업 취소, 또는 완료 때 `indexPath(for:)` 재확인 | `onViewRecycled()`에서 작업 취소, 또는 `getBindingAdapterPosition()` 재확인 | `unbindItem`에서 작업 취소 |
 | 뷰포트 안 셀 위치 (캐러셀·휠 연출) | `NotifyCellPositions` + 셀 뷰 `OnViewportPositionChanged(normalizedOffset)`, `CellViewPositionChanged` | `scrollViewDidScroll(_:)`에서 셀 frame 변환, 또는 `UICollectionViewLayout` 레이아웃 속성 | `OnScrollListener`에서 자식 뷰 위치 계산, 또는 커스텀 `LayoutManager` | — |
 | 스크롤 중 | `ScrollerScrolled`, `ScrollerScrollingChanged` | `scrollViewDidScroll(_:)` | `OnScrollListener` | 스크롤바 `valueChanged` |
+| 스크롤이 멈춤 (관성·애니메이션 포함) | `ScrollerSettled` / `IsSettled`, 셀 뷰 `OnScrollerSettled()` | `scrollViewDidEndDecelerating(_:)` / `scrollViewDidEndScrollingAnimation(_:)` (감속 없이 놓으면 `scrollViewDidEndDragging(_:willDecelerate:)`) | `onScrollStateChanged()`의 `SCROLL_STATE_IDLE` | — |
+| 빠르게 스크롤하는 중 | `IsFastScrolling` / `ScrollerFastScrollingChanged` (뷰포트 비율 임계값, 히스테리시스) | — (`scrollViewDidScroll(_:)`에서 속도를 계산) | — (`onScrolled()`의 이동량으로 계산) | — |
 | 스냅 | `Snapping` + `ScrollerSnapped` | `isPagingEnabled`, `scrollViewWillEndDragging(_:withVelocity:targetContentOffset:)` | `LinearSnapHelper` / `PagerSnapHelper` | — |
 | 무한 루프 | `Loop`, `LoopJumpDirection` | — | — | — |
 
