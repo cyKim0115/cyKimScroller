@@ -62,6 +62,10 @@ namespace CyKim.Scroller
         [Tooltip("콘텐츠 처음·끝까지 남은 거리가 이 값(px) 이하가 되면 ScrollerNearEdge를 한 번 알린다. 0이면 끈다.")]
         [SerializeField, Min(0f)] private float _nearEdgeDistance;
 
+        [Header("Pool")]
+        [Tooltip("셀 식별자마다 회수 풀에 남길 셀 수의 기본 상한. 넘치면 가장 오래 회수된 셀부터 파괴한다. 0이면 제한 없음. 식별자별로는 SetMaxRecycled로 정한다.")]
+        [SerializeField, Min(0)] private int _defaultMaxRecycled;
+
         [Header("Snapping")]
         [SerializeField] private bool _snapping;
         [Tooltip("드래그를 놓은 뒤 속도가 이 값 이하로 떨어지면 스냅한다.")]
@@ -104,7 +108,7 @@ namespace CyKim.Scroller
 
         private readonly CyScrollerLayout _layout = new CyScrollerLayout();
         private readonly List<CyScrollerCellView> _activeCells = new List<CyScrollerCellView>(32);
-        private readonly Dictionary<string, List<CyScrollerCellView>> _pools = new Dictionary<string, List<CyScrollerCellView>>();
+        private readonly Dictionary<string, CellPool> _pools = new Dictionary<string, CellPool>();
 
         private ScrollRect _scrollRect;
         private RectTransform _content;
@@ -842,17 +846,7 @@ namespace CyKim.Scroller
                 return null;
             }
 
-            string identifier = cellPrefab.CellIdentifier;
-            if (string.IsNullOrEmpty(identifier))
-            {
-                identifier = string.Empty;
-                if (!_warnedEmptyIdentifier)
-                {
-                    _warnedEmptyIdentifier = true;
-                    Debug.LogWarning("[CyScroller] CellIdentifier가 빈 셀 프리팹이 있습니다. 종류가 다른 프리팹이 같은 풀을 공유하게 됩니다.", cellPrefab);
-                }
-            }
-
+            string identifier = ResolvePoolIdentifier(cellPrefab);
             CyScrollerCellView cell = PopRecycled(identifier);
             if (cell != null)
             {
@@ -966,9 +960,9 @@ namespace CyKim.Scroller
 
         private void ClearRecycledNow()
         {
-            foreach (KeyValuePair<string, List<CyScrollerCellView>> pair in _pools)
+            foreach (KeyValuePair<string, CellPool> pair in _pools)
             {
-                List<CyScrollerCellView> pool = pair.Value;
+                List<CyScrollerCellView> pool = pair.Value.Cells;
                 for (int i = 0; i < pool.Count; i++)
                 {
                     if (pool[i] != null)
@@ -992,9 +986,9 @@ namespace CyKim.Scroller
         public int GetRecycledCellCount()
         {
             int count = 0;
-            foreach (KeyValuePair<string, List<CyScrollerCellView>> pair in _pools)
+            foreach (KeyValuePair<string, CellPool> pair in _pools)
             {
-                count += pair.Value.Count;
+                count += pair.Value.Cells.Count;
             }
 
             return count;
@@ -2267,8 +2261,11 @@ namespace CyKim.Scroller
                 UnbindCell(cell);
 
                 // 재부모화 없이 content 아래에서 끄기만 한다 (SetParent·레이아웃 dirty 비용 회피).
+                // 상한을 넘으면 가장 오래 회수된 셀부터 파괴한다 (상한은 풀 객체에 있어 사전을 다시 찾지 않는다).
                 cell.gameObject.SetActive(false);
-                GetPool(cell.CellIdentifier).Add(cell);
+                CellPool pool = GetPool(cell.CellIdentifier);
+                pool.Cells.Add(cell);
+                TrimPool(pool);
             }
         }
 
@@ -2285,11 +2282,12 @@ namespace CyKim.Scroller
 
         private CyScrollerCellView PopRecycled(string identifier)
         {
-            if (!_pools.TryGetValue(identifier, out List<CyScrollerCellView> pool))
+            if (!_pools.TryGetValue(identifier, out CellPool cellPool))
             {
                 return null;
             }
 
+            List<CyScrollerCellView> pool = cellPool.Cells;
             while (pool.Count > 0)
             {
                 int lastIndex = pool.Count - 1;
@@ -2304,12 +2302,12 @@ namespace CyKim.Scroller
             return null;
         }
 
-        private List<CyScrollerCellView> GetPool(string identifier)
+        private CellPool GetPool(string identifier)
         {
             identifier ??= string.Empty;
-            if (!_pools.TryGetValue(identifier, out List<CyScrollerCellView> pool))
+            if (!_pools.TryGetValue(identifier, out CellPool pool))
             {
-                pool = new List<CyScrollerCellView>();
+                pool = new CellPool();
                 _pools.Add(identifier, pool);
             }
 
