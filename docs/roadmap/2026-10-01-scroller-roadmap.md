@@ -39,12 +39,12 @@
 | 7 | 공개 앵커·상태 API, `ReloadData(ReloadAnchor)`, 준비 전 요청의 지연 복원 | 높음 | S | 중: 트윈 중 복원, 루프 가운데 세트 매핑 | 2·6 | AND·FLT·Web |
 | 8 | 부분 갱신 `RefreshCells(changeMask)`·`ReloadCellView` (활성 셀만, 크기 불변) | 높음 | S | 낮음: 활성 셀에만 전달됨을 문서화 | — | AND·iOS |
 | 9 | 증분 구조 변경 `Begin/EndUpdates`, `InsertCells/RemoveCells/MoveCell`, Reconcile | 높음 | M | 높음: 인덱스 장부·재진입 → 기준 모델 비교 테스트 | 2·7 | AND·iOS |
-| 10 | 셀 크기 변경과 스크롤 보정 (`SetCellViewSize`, 애니메이션, `ResizeAnchor`) | 높음 | M | 중: 루프 SetCount 변화, 탄성 구간 | 2·3 | iOS·Web·FLT |
+| 10 | 셀 크기 변경과 스크롤 보정 (`SetCellViewSize`, 애니메이션, `ResizeAnchor`) — **브랜치 구현(미병합)**: `feature/cell-resize`, API는 `ResizeCellView`(크기는 델리게이트 기준) | 높음 | M | 중: 루프 SetCount 변화, 탄성 구간 | 2·3 | iOS·Web·FLT |
 | 11 | 손을 뗄 때 정하는 스냅 전략 (착지 예측·한 칸·페이지, 속도가 끊기지 않는 트윈) **사용자 선택 필요(기본 감각)** | 높음 | M | 중: 감각 튜닝, 끝단 오버슈트 이징 | 2 | AND·iOS·FLT |
-| 12 | 끝 근접 이벤트 `ScrollerNearEdge`, 범위 로더 헬퍼 | 중 | S | 낮음: 래치, 콘텐츠가 뷰포트보다 짧은 경우 | 7·9 | Web·AND |
+| 12 | 끝 근접 이벤트 `ScrollerNearEdge`, 범위 로더 헬퍼 — **브랜치 구현(미병합)**: `feature/near-edge`, 범위 로더 헬퍼는 만들지 않고 README 예시로 대신 | 중 | S | 낮음: 래치, 콘텐츠가 뷰포트보다 짧은 경우 | 7·9 | Web·AND |
 | 13 | 채팅 모드: 짧은 콘텐츠 끝 정렬, 끝 따라가기, `IsAtEnd`, 점프 없는 프리펜드(앞쪽 삽입) **사용자 선택 필요** | 높음 | M | 중: 드래그·관성 중 프리펜드 | 2·7·9·10 | Web·AND·FLT |
-| 14 | 풀 프리웜(동기·`InstantiateAsync`), 식별자별 풀 상한 | 중 | S | 낮음: 비동기 생성 중 초과분은 완료 시 정리 | — | AND·U |
-| 15 | 정착 상태 `IsSettled`/`ScrollerSettled`, `IsFastScrolling` (플레이스홀더 패턴) | 중 | S | 낮음: 임계값에 히스테리시스 필요 | 4 | Web·FLT |
+| 14 | 풀 프리웜(동기·`InstantiateAsync`), 식별자별 풀 상한 — **브랜치 구현(미병합)**: `feature/pool-prewarm` | 중 | S | 낮음: 비동기 생성 중 초과분은 완료 시 정리 | — | AND·U |
+| 15 | 정착 상태 `IsSettled`/`ScrollerSettled`, `IsFastScrolling` (플레이스홀더 패턴) — **브랜치 구현(미병합)**: `feature/settled-state` | 중 | S | 낮음: 임계값에 히스테리시스 필요 | 4 | Web·FLT |
 | 16 | 중첩 스크롤 제스처 중재 (직교 드래그를 부모로 넘기는 별도 컴포넌트) | 높음 | M | 중: 제스처 도중 행이 재활용되면 OnDisable에서 부모 OnEndDrag 호출 | 4 | AND·iOS·U |
 | 17 | 스티키 섹션 헤더 (뷰포트 오버레이 레이어, 밀어내기) **사용자 선택 필요(중복 헤더 처리)** | 중~높음 | M | 중: 같은 인덱스에 뷰 두 개, 루프에서 비활성 | 3 | iOS·AND·FLT |
 | 18 | 고정 머리·꼬리 콘텐츠 (재활용 안 하는 헤더·푸터를 패딩으로 편입) | 중 | S | 낮음: 알림 없는 리사이즈 | 2·10 | Web·FLT |

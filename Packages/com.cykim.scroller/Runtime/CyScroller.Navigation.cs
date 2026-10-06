@@ -242,13 +242,15 @@ namespace CyKim.Scroller
         {
             RecoverBeforeMove();
             _hasPendingAnchor = false;
+
+            // 맞출 셀이 없어도 스냅 대기는 푼다 (빈 목록에서 드래그·휠이 켠 대기가 남아 정착하지 못하거나, 나중에 데이터가 생길 때 갑자기 스냅하지 않게).
+            _snapArmed = false;
             if (!_hasLoaded || _layout.SlotCount == 0)
             {
                 return;
             }
 
             EndDragForProgrammaticMove();
-            _snapArmed = false;
             float watchPosition = ScrollPosition + _snapWatchOffset * ScrollRectSize;
             var request = new AlignRequest
             {
@@ -554,6 +556,8 @@ namespace CyKim.Scroller
             _tweenComplete = onComplete;
             _snapPending = isSnap;
             _tweenSerial++;
+            // 새 트윈은 첫 걸음 전까지 속도 0이다 (앞 트윈의 걸음 속도가 시작 프레임의 고속 스크롤 판단에 쓰이지 않게).
+            _tweenStepSpeed = 0f;
             SetTweening(true);
         }
 
@@ -573,7 +577,9 @@ namespace CyKim.Scroller
             float eased = CyScrollerEasing.Evaluate(_tweenType, finished ? 1f : _tweenElapsed / _tweenDuration, _customTweenCurve);
 
             int serial = _tweenSerial;
+            float before = ReadPosition(_appliedVertical);
             MoveTweenTo(eased);
+            _tweenStepSpeed = deltaTime > 0f ? Mathf.Abs(ReadPosition(_appliedVertical) - before) / deltaTime : 0f;
             UpdateActiveRange();
 
             // 범위 갱신 콜백이 트윈을 멈췄거나 새 이동을 시작했으면 그쪽에 맡긴다.
@@ -749,6 +755,7 @@ namespace CyKim.Scroller
             _tweening = false;
             _tweenComplete = null;
             _snapPending = false;
+            _tweenStepSpeed = 0f;
         }
 
         /// <summary>트윈을 취소한다. 완료 콜백·스냅 이벤트 없이 끝나며, 트윈 중이었으면 끝났다고 알린다.</summary>

@@ -29,6 +29,13 @@ namespace CyKim.Scroller
         Forward = 2,
     }
 
+    /// <summary>콘텐츠의 가장자리. 세로면 위(Start)·아래(End), 가로면 왼쪽(Start)·오른쪽(End).</summary>
+    public enum ScrollEdge
+    {
+        Start = 0,
+        End = 1,
+    }
+
     /// <summary><see cref="CyScroller.ScrollIntoView"/>에서 셀을 뷰포트 어디에 맞출지.</summary>
     public enum ScrollAlign
     {
@@ -71,6 +78,22 @@ namespace CyKim.Scroller
         /// 보이던 셀이 커지거나 줄어도 셀 끝이 뷰포트 끝에서 같은 거리에 남는다. 항목 ID가 있으면 ID로 같은 항목을 찾는다.
         /// </summary>
         LastVisible = 4,
+    }
+
+    /// <summary>셀 크기가 바뀔 때(<see cref="CyScroller.ResizeCellView"/>) 화면에서 제자리에 둘 기준. 결과는 스크롤 범위로 잘린다.</summary>
+    public enum ResizeAnchor
+    {
+        /// <summary>
+        /// 다른 증분 변경과 같은 규칙. 뷰포트 맨 앞 항목보다 앞에서 생긴 크기 변화만큼 스크롤 위치를 옮겨 보던 화면을 지키고,
+        /// 맨 앞 항목 자신이거나 그 뒤 항목이면 옮기지 않는다 (셀이 뒤쪽으로 늘어나거나 줄어든다).
+        /// </summary>
+        Auto = 0,
+
+        /// <summary>그 셀의 시작(위·왼쪽) 가장자리를 화면에 고정한다. 셀은 뒤쪽(아래·오른쪽)으로 늘어나거나 줄어든다.</summary>
+        Start = 1,
+
+        /// <summary>그 셀의 끝(아래·오른쪽) 가장자리를 화면에 고정한다. 셀은 앞쪽(위·왼쪽)으로 늘어나거나 줄어든다.</summary>
+        End = 2,
     }
 
     /// <summary>

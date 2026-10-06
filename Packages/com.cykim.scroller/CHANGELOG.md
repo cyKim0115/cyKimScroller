@@ -2,6 +2,36 @@
 
 이 패키지의 변경 내역. 형식은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/), 버전은 [SemVer](https://semver.org/lang/ko/)를 따른다.
 
+## [Unreleased]
+
+### Added
+- 셀 크기 변경 `ResizeCellView(dataIndex, duration, tweenType, anchor)`: 그 항목의 크기만 델리게이트에 다시 묻고, 셀은 다시 바인딩하지 않은 채(`BindVersion` 그대로) 크기·위치만 바꾼다.
+  `duration`이 0보다 크면 LateUpdate에서 그 시간 동안 크기를 바꾸고(`IsResizing`), 같은 항목에 새 요청이 오면 지금 크기에서 이어 간다.
+  그 항목이 지워지거나 `ReloadCellView`·리로드로 크기를 다시 읽으면 애니메이션을 버린다. 배치(`BeginUpdates`) 안에서는 다른 증분 변경처럼 순차 의미론을 따른다
+- `ResizeAnchor`(Auto·Start·End): Auto는 다른 증분 변경과 같은 위치 보존, Start·End는 그 셀의 위·아래 가장자리를 화면에 고정한다. 결과는 스크롤 범위로 자른다
+- 셀 뷰 `RequestResize(duration, tweenType, anchor)`: 그 셀의 `DataIndex`로 `ResizeCellView`를 부른다
+- Profiler 마커 `CyScroller.Resize` (크기 애니메이션 한 걸음)
+- 정착 상태 `IsSettled`와 `ScrollerSettled`(`ScrollerSettledHandler`): 드래그 중이 아니고 트윈·스냅 대기가 없고 스크롤 속도가 `SettleVelocityThreshold`(기본 10px/s) 이하이면 정착이다.
+  정착하지 않은 상태에서 정착으로 바뀔 때 LateUpdate 끝에서 한 번 알리고(첫 로드 직후 제외), 그 뒤에도 정착해 있으면 활성 셀마다 `CyScrollerCellView.OnScrollerSettled()`를 부른다
+- 고속 스크롤 `IsFastScrolling`과 `ScrollerFastScrollingChanged`(`ScrollerFastScrollingChangedHandler`): 스크롤 속도(트윈이면 트윈 이동 속도, 아니면 관성 속도)가
+  뷰포트 길이 × `FastScrollEnterThreshold`(기본 3)/s 이상이면 켜지고 × `FastScrollExitThreshold`(기본 1.5)/s 미만이면 꺼진다 (히스테리시스, 들어가는 값 0이면 끔)
+- 인스펙터 Runtime 영역에 Settled·Fast Scrolling 표시
+- 끝 근접 이벤트 `ScrollerNearEdge`(`ScrollerNearEdgeHandler`, `ScrollEdge` Start·End)와 `NearEdgeDistance`(px, 기본 0 = 끔): 콘텐츠 처음·끝까지 남은 거리가 그 값 이하가 되면
+  LateUpdate 끝에서 가장자리마다 한 번 알리고 잠근다. 남은 거리가 × 1.5를 넘게 멀어지거나 데이터 개수가 바뀌면 다시 연다.
+  콘텐츠가 뷰포트보다 짧으면 End만 알리고(개수가 바뀌지 않으면 다시 알리지 않음), 루프 모드에서는 알리지 않는다
+- 풀 미리 채우기 `Prewarm(prefab, count)`와 `PrewarmAsync(prefab, count)`(`Object.InstantiateAsync`): 그 식별자 풀의 회수 셀이 count가 될 때까지 만들어 끈 채 넣고 `CellViewInstantiated`를 부른다.
+  비동기는 진행 중인 요청까지 세어 더 만들지 않고, 할 일이 없으면 null을 돌려주며, 끝나기 전에 스크롤러가 파괴되면 만든 셀을 모두 파괴한다
+- 식별자별 회수 상한 `SetMaxRecycled(cellIdentifier, max)`·`GetMaxRecycled(cellIdentifier)`와 기본 상한 `DefaultMaxRecycled`(인스펙터 Pool, 기본 0 = 제한 없음): 넘치면 가장 오래 회수된 셀부터 파괴한다.
+  상한은 풀 객체에 두어 회수할 때 사전을 다시 찾지 않는다
+
+### Changed
+- 크기 애니메이션의 중간 걸음은 레이아웃 접두합을 다시 더하지 않고 그 뒤 항목 위치에 변화량을 더해 계산한다. 10만 항목의 맨 앞 항목을 애니메이션해도 걸음마다 항목 수와 무관하게 활성 셀 수만큼 들고,
+  마지막 걸음이나 다른 크기·개수 변경 때 바뀐 자리부터 한 번 다시 더한다
+- 루프 모드에서 크기 변경(과 내용 갱신)만 있는 배치는 전체 리로드 대신 위치를 지키는 재배치로 맞춘다 (진행 중인 트윈·점프 정렬을 이어 간다. 애니메이션 없이 바로 바꾸고 활성 셀은 다시 바인딩한다)
+
+### Fixed
+- 데이터가 0개일 때 `Snap()`(드래그·휠 뒤 자동 스냅 포함)이 스냅 대기를 풀지 않아, 나중에 데이터가 생기면 사용자 입력 없이 스냅하던 문제. 이제 맞출 셀이 없어도 대기를 푼다
+
 ## [0.2.1] - 2026-10-06
 
 ### Changed
