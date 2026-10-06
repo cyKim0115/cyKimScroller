@@ -21,6 +21,13 @@ namespace CyKim.Scroller.Tests
         public float LastNormalizedOffset = float.NaN;
         public int LastPositionFrame = -1;
 
+        /// <summary>증분 변경으로 인덱스만 바뀐 횟수와 마지막으로 받은 이전 인덱스.</summary>
+        public int DataIndexChangedCount;
+        public int LastPreviousDataIndex = -1;
+
+        /// <summary>바뀌기 직전 셀 위치(RectTransform offsetMax.y). OnDataIndexChanged 뒤에 재배치되는지 보는 데 쓴다.</summary>
+        public float OffsetMaxYAtIndexChange = float.NaN;
+
         /// <summary>OnRecycled 안에서 불린다. 직렬화되지 않으므로 Instantiate한 뷰에는 따로 넣는다.</summary>
         public System.Action<TestCellView> RecycledHook;
 
@@ -44,6 +51,13 @@ namespace CyKim.Scroller.Tests
         protected internal override void OnBecameHidden()
         {
             BecameHiddenCount++;
+        }
+
+        protected internal override void OnDataIndexChanged(int previousDataIndex)
+        {
+            DataIndexChangedCount++;
+            LastPreviousDataIndex = previousDataIndex;
+            OffsetMaxYAtIndexChange = RectTransform.offsetMax.y;
         }
 
         protected internal override void OnViewportPositionChanged(float normalizedOffset)

@@ -266,6 +266,280 @@ namespace CyKim.Scroller.Tests
             Assert.AreEqual(500f, layout.ContentExtent, EPSILON);
         }
 
+        #region Incremental Edits
+
+        private const int RANDOM_EDIT_BATCHES = 300;
+
+        // 이 배치 수마다 데이터를 새로 채운다 (가끔 새 레이아웃으로 버퍼를 개수만큼 딱 맞춘다).
+        private const int RANDOM_EDIT_RESET_INTERVAL = 25;
+
+        private const float EDIT_PADDING_BEFORE = 3.5f;
+        private const float EDIT_PADDING_AFTER = 1.5f;
+
+        [Test]
+        public void InsertRemoveMoveSizes_ShiftSizesAndRebuildStarts()
+        {
+            var layout = new CyScrollerLayout();
+            float[] sizes = { 10f, 20f, 30f, 40f };
+            layout.SetDataCount(sizes.Length);
+            for (int i = 0; i < sizes.Length; i++)
+            {
+                layout.SetSize(i, sizes[i]);
+            }
+
+            layout.Build(5f, 2f, 3f, false, 100f);
+
+            // [10, 20, 30, 40] → 1번 앞에 두 칸 → [10, ?, ?, 20, 30, 40]
+            layout.InsertSizes(1, 2);
+            Assert.AreEqual(6, layout.DataCount);
+            Assert.IsTrue(layout.IsSizeUnset(1));
+            Assert.IsTrue(layout.IsSizeUnset(2));
+            Assert.IsFalse(layout.IsSizeUnset(3));
+            Assert.AreEqual(20f, layout.GetSize(3));
+            layout.SetSize(1, 1f);
+            layout.SetSize(2, -7f);
+            Assert.IsFalse(layout.IsSizeUnset(2), "음수 크기는 0으로 잘려 받은 크기다");
+
+            // 5 → 0 이동: [40, 10, 1, 0, 20, 30], [2, 4) 삭제: [40, 10, 20, 30]
+            layout.MoveSize(5, 0);
+            layout.RemoveSizes(2, 2);
+            layout.Build(5f, 2f, 3f, false, 100f);
+
+            float[] expected = { 40f, 10f, 20f, 30f };
+            Assert.AreEqual(expected.Length, layout.DataCount);
+            float start = 2f;
+            for (int i = 0; i < expected.Length; i++)
+            {
+                Assert.AreEqual(expected[i], layout.GetSize(i), $"size {i}");
+                Assert.AreEqual(start, layout.GetSlotStart(i), EPSILON, $"start {i}");
+                start += expected[i] + 5f;
+            }
+
+            Assert.AreEqual(2f + 100f + 3 * 5f + 3f, layout.ContentExtent, EPSILON);
+        }
+
+        /// <summary>
+        /// 고정 시드로 크기 배열 삽입·삭제·이동(끝 삭제·끝에 붙이기 포함)을 섞은 배치를 적용하고(삽입한 자리는 배치 끝에 채움), 바뀐 자리부터 다시 더한 Build 결과가
+        /// 같은 크기로 처음부터 Build한 결과와 비트 단위로 같은지 비교한다. 간격 변경·루프·빈 버퍼에서 늘어나는 경로와
+        /// 개수만큼 딱 맞는 새 버퍼(첫 로드처럼)에서 늘어나는 경로도 섞는다.
+        /// </summary>
+        [Test]
+        public void IncrementalEdits_MatchFreshBuild()
+        {
+            var random = new System.Random(RANDOM_SEED + 4);
+            var layout = new CyScrollerLayout();
+
+            // 기준 모델. NaN은 아직 받지 않은 크기다.
+            var model = new List<float>();
+            float spacing = 0f;
+
+            for (int iteration = 0; iteration < RANDOM_EDIT_BATCHES; iteration++)
+            {
+                if (iteration % RANDOM_EDIT_RESET_INTERVAL == 0)
+                {
+                    // 새 레이아웃이면 버퍼가 개수만큼 딱 맞아 첫 배치의 삽입이 버퍼를 늘린다.
+                    if (random.Next(3) != 0)
+                    {
+                        layout = new CyScrollerLayout();
+                    }
+
+                    int count = random.Next(0, 40);
+                    model.Clear();
+                    layout.SetDataCount(count);
+                    for (int i = 0; i < count; i++)
+                    {
+                        float size = RandomEditSize(random);
+                        layout.SetSize(i, size);
+                        model.Add(Math.Max(0f, size));
+                    }
+
+                    layout.Build(spacing, EDIT_PADDING_BEFORE, EDIT_PADDING_AFTER, false, 200f);
+                }
+
+                int operations = random.Next(1, 7);
+                for (int op = 0; op < operations; op++)
+                {
+                    int kind = random.Next(6);
+                    if (kind == 5 && model.Count > 0)
+                    {
+                        // 끝 교체 (무한 스크롤에서 로딩 셀을 지우고 다음 페이지를 붙이는 경우): 끝에서 지운 뒤 그 자리에 붙인다.
+                        int removed = random.Next(1, Math.Min(3, model.Count) + 1);
+                        layout.RemoveSizes(model.Count - removed, removed);
+                        model.RemoveRange(model.Count - removed, removed);
+                        int added = random.Next(1, 9);
+                        layout.InsertSizes(model.Count, added);
+                        for (int j = 0; j < added; j++)
+                        {
+                            model.Add(float.NaN);
+                        }
+                    }
+                    else if (kind == 0 || model.Count == 0)
+                    {
+                        int at = random.Next(model.Count + 1);
+                        int count = random.Next(1, 6);
+                        layout.InsertSizes(at, count);
+                        for (int j = 0; j < count; j++)
+                        {
+                            model.Insert(at, float.NaN);
+                        }
+                    }
+                    else if (kind == 1)
+                    {
+                        int at = random.Next(model.Count);
+                        int count = random.Next(1, Math.Min(4, model.Count - at) + 1);
+                        layout.RemoveSizes(at, count);
+                        model.RemoveRange(at, count);
+                    }
+                    else if (kind == 2)
+                    {
+                        int from = random.Next(model.Count);
+                        int to = random.Next(model.Count);
+                        layout.MoveSize(from, to);
+                        float moved = model[from];
+                        model.RemoveAt(from);
+                        model.Insert(to, moved);
+                    }
+                    else if (kind == 3)
+                    {
+                        // 끝에서 지운다 (지운 자리의 시작이 맞은 값으로 남는 경로).
+                        int count = random.Next(1, Math.Min(4, model.Count) + 1);
+                        layout.RemoveSizes(model.Count - count, count);
+                        model.RemoveRange(model.Count - count, count);
+                    }
+                    else
+                    {
+                        // 끝에 붙인다.
+                        int count = random.Next(1, 6);
+                        layout.InsertSizes(model.Count, count);
+                        for (int j = 0; j < count; j++)
+                        {
+                            model.Add(float.NaN);
+                        }
+                    }
+                }
+
+                string context = $"#{iteration} count={model.Count} spacing={spacing}";
+                Assert.AreEqual(model.Count, layout.DataCount, context);
+
+                // 배치 끝: 받지 않은 자리(연산을 거치며 같이 옮겨졌다)만 채운다.
+                for (int i = 0; i < model.Count; i++)
+                {
+                    bool unset = float.IsNaN(model[i]);
+                    Assert.AreEqual(unset, layout.IsSizeUnset(i), $"{context} unset {i}");
+                    if (unset)
+                    {
+                        float size = RandomEditSize(random);
+                        layout.SetSize(i, size);
+                        model[i] = Math.Max(0f, size);
+                    }
+                    else
+                    {
+                        Assert.AreEqual(model[i], layout.GetSize(i), $"{context} size {i}");
+                    }
+                }
+
+                if (random.Next(5) == 0)
+                {
+                    spacing = random.Next(0, 21) * 0.37f;
+                }
+
+                bool loop = random.Next(4) == 0;
+                float viewport = random.Next(0, 801) * 0.5f;
+                layout.Build(spacing, EDIT_PADDING_BEFORE, EDIT_PADDING_AFTER, loop, viewport, 10f, 20f);
+                AssertMatchesFreshBuild(layout, model, spacing, loop, viewport, context);
+            }
+        }
+
+        /// <summary>
+        /// 끝 항목을 지운 뒤 같은 배치에서 끝에 붙여 버퍼가 늘어날 때(빈 버퍼에서 개수만큼 딱 맞게 만든 첫 로드 뒤) 접두합이 처음부터 Build한 결과와 같은지.
+        /// 끝을 지운 직후에는 지운 자리의 시작도 맞은 값으로 남는다고 보므로, 버퍼를 늘릴 때 그 자리까지 옮겨야 붙인 항목이 0에서 시작하지 않는다
+        /// (무한 스크롤에서 로딩 셀을 지우고 다음 페이지를 붙이는 경우).
+        /// </summary>
+        [TestCase(50, 1, 20, 0f)]
+        [TestCase(50, 1, 20, 4f)]
+        [TestCase(8, 3, 30, 2.5f)]
+        [TestCase(12, 12, 13, 1f)]
+        public void RemoveTailThenAppendPastCapacity_MatchesFreshBuild(int count, int removed, int appended, float spacing)
+        {
+            var layout = new CyScrollerLayout();
+            var model = new List<float>();
+            layout.SetDataCount(count);
+            for (int i = 0; i < count; i++)
+            {
+                float size = 10f + i * 1.5f;
+                layout.SetSize(i, size);
+                model.Add(size);
+            }
+
+            layout.Build(spacing, EDIT_PADDING_BEFORE, EDIT_PADDING_AFTER, false, 200f);
+
+            // 한 배치: 끝 removed개 삭제 → 그 자리에 appended개 삽입(버퍼 초과) → 삽입분 크기 → 한 번 Build
+            int at = count - removed;
+            layout.RemoveSizes(at, removed);
+            model.RemoveRange(at, removed);
+            layout.InsertSizes(at, appended);
+            for (int i = 0; i < appended; i++)
+            {
+                float size = 7f + i * 0.75f;
+                layout.SetSize(at + i, size);
+                model.Insert(at + i, size);
+            }
+
+            layout.Build(spacing, EDIT_PADDING_BEFORE, EDIT_PADDING_AFTER, false, 200f);
+            AssertMatchesFreshBuild(layout, model, spacing, false, 200f, $"count {count} − {removed} + {appended}");
+
+            float expectedFirstAppended = EDIT_PADDING_BEFORE;
+            for (int i = 0; i < at; i++)
+            {
+                expectedFirstAppended += model[i] + spacing;
+            }
+
+            // 더하는 순서가 달라 생기는 float 오차만 허용한다 (잘못되면 남은 항목 길이만큼 어긋난다).
+            Assert.AreEqual(expectedFirstAppended, layout.GetSlotStart(at), 0.01f, "붙인 첫 항목은 남은 항목 뒤에서 시작한다");
+        }
+
+        /// <summary>같은 크기로 처음부터 Build한 레이아웃과 접두합·길이·루프 세트가 비트 단위로 같은지.</summary>
+        private static void AssertMatchesFreshBuild(CyScrollerLayout layout, List<float> model, float spacing, bool loop, float viewport, string context)
+        {
+            var fresh = new CyScrollerLayout();
+            fresh.SetDataCount(model.Count);
+            for (int i = 0; i < model.Count; i++)
+            {
+                fresh.SetSize(i, model[i]);
+            }
+
+            fresh.Build(spacing, EDIT_PADDING_BEFORE, EDIT_PADDING_AFTER, loop, viewport, 10f, 20f);
+            Assert.AreEqual(model.Count, layout.DataCount, context);
+            Assert.AreEqual(fresh.CycleExtent, layout.CycleExtent, 0d, context);
+            Assert.AreEqual(fresh.ContentExtent, layout.ContentExtent, 0d, context);
+            Assert.AreEqual(fresh.IsLoop, layout.IsLoop, context);
+            Assert.AreEqual(fresh.SetCount, layout.SetCount, context);
+            for (int i = 0; i < model.Count; i++)
+            {
+                Assert.AreEqual(fresh.GetSlotStart(i), layout.GetSlotStart(i), 0d, $"{context} start {i}");
+                Assert.AreEqual(fresh.GetSlotEnd(i), layout.GetSlotEnd(i), 0d, $"{context} end {i}");
+            }
+        }
+
+        /// <summary>반올림이 생기는 소수 크기. 가끔 0·음수(0으로 잘림)도 낸다.</summary>
+        private static float RandomEditSize(System.Random random)
+        {
+            int roll = random.Next(10);
+            if (roll == 0)
+            {
+                return 0f;
+            }
+
+            if (roll == 1)
+            {
+                return -random.Next(1, 30);
+            }
+
+            return (float)(random.NextDouble() * 300.0);
+        }
+
+        #endregion
+
         #region Random Reference
 
         /// <summary>
