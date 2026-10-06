@@ -473,6 +473,7 @@ namespace CyKim.Scroller
                     return;
                 }
 
+                RecoverBeforeMove();
                 CancelTween();
                 _alignmentActive = false;
                 _snapArmed = false;
@@ -506,6 +507,7 @@ namespace CyKim.Scroller
                     return;
                 }
 
+                RecoverBeforeMove();
                 ScrollPosition = GetPositionForFactor(value);
             }
         }
@@ -1209,14 +1211,26 @@ namespace CyKim.Scroller
 
             // 회수 콜백이 위치를 바꿨어도 바뀐 화면을 기준으로 삼도록 셀부터 회수한 뒤 읽는다.
             // 보관한 앵커가 있으면 그쪽이 가려던 자리이므로 지금 화면 대신 그 앵커를 쓴다.
+            // 다시 읽다 멈춘 배치(키 유지 리로드·재배치의 복구)에서는 화면 항목을 읽을 수 없다. 보관한 앵커(다시 읽기 전 화면)를
+            // 이동 요청(배치 안의 ScrollPosition 대입, 회수 콜백 등)이 버렸으면 그 요청이 옮긴 콘텐츠 위치를 지킨다.
             bool keepVisible = !_hasPendingAnchor && (anchor == ReloadAnchor.FirstVisible || anchor == ReloadAnchor.LastVisible);
+            bool keepPosition = keepVisible && _rebuildFailed;
+            keepVisible &= !keepPosition;
+            float position = ReadPosition(_appliedVertical);
             float overscroll = 0f;
             CyScrollerAnchor visible = keepVisible ? CaptureLayoutAnchor(anchor == ReloadAnchor.LastVisible, out overscroll) : default;
 
             RebuildLayout(true);
             _hasLoaded = true;
             _lastViewportExtent = ScrollRectSize;
-            MoveAfterReload(anchor, factor, keepVisible, in visible, overscroll);
+            if (keepPosition)
+            {
+                MoveContentTo(Mathf.Clamp(position, 0f, ScrollSize));
+            }
+            else
+            {
+                MoveAfterReload(anchor, factor, keepVisible, in visible, overscroll);
+            }
 
             UpdateActiveRange();
             ApplyScrollbarVisibility();
@@ -1271,6 +1285,9 @@ namespace CyKim.Scroller
                 }
 
                 RebuildItemIds(count);
+
+                // 끝까지 다시 읽었다. 다시 읽다 멈춰 반쯤 읽힌 배치였어도 이제 맞다 (아래 Build는 사용자 코드를 부르지 않는다).
+                _rebuildFailed = false;
             }
 
             GetMainAxisPadding(out float paddingBefore, out float paddingAfter);
@@ -1348,7 +1365,8 @@ namespace CyKim.Scroller
         /// <para>델리게이트를 다시 읽고 축은 그대로인 재배치(<see cref="ReloadDataKeepingPosition"/>)는 <see cref="PreserveCellsById"/>를 따른다:
         /// 셀을 먼저 회수하지 않고 다시 읽은 뒤 ID가 같은 활성 셀을 새 인덱스로 옮긴다(<see cref="ReconcilePreservedCells"/>). 다른 재배치는 모든 셀을 다시 바인딩한다.
         /// 키 유지 리로드(<see cref="ReloadPreservingCells"/>)와 같이, 셀을 맞추기 전에 사용자 코드(다시 읽는 중의 델리게이트)가 부른 <see cref="RefreshCells"/>는
-        /// 새 인덱스로 보고 맞춘 뒤 남은 셀에 부르고, 다시 읽거나 맞추는 도중 사용자 코드 예외로 멈추면 모두 다시 바인딩하는 앵커 보존 리로드를 미뤄 다음 갱신에 맞춘다.</para>
+        /// 새 인덱스로 보고 맞춘 뒤 남은 셀에 부르고, 다시 읽거나 맞추는 도중 사용자 코드 예외로 멈추면 모두 다시 바인딩하는 앵커 보존 리로드를 미뤄 다음 갱신에 맞춘다
+        /// (다시 읽다 멈췄으면 반쯤 읽은 배치 대신 다시 읽기 전 화면으로 간다). 셀을 맞추기 전에 닫은 배치의 미룬 작업은 맞춘 뒤 범위 갱신에서 처리한다.</para>
         /// </remarks>
         private void ApplyRelayout(bool requeryDelegate, bool reconfigure)
         {
@@ -1397,6 +1415,7 @@ namespace CyKim.Scroller
             // (활성 셀이 아직 옛 인덱스라 바로 부르면 다른 항목의 셀이 받는다). ReloadPreservingCells와 같다.
             bool tweenEmptied = false;
             Action emptiedComplete = null;
+            bool rebuilt = false;
             bool completed = false;
             if (preserve)
             {
@@ -1406,6 +1425,7 @@ namespace CyKim.Scroller
             try
             {
                 RebuildLayout(requeryDelegate);
+                rebuilt = true;
 
                 if (alignById)
                 {
@@ -1477,7 +1497,8 @@ namespace CyKim.Scroller
                     if (!completed)
                     {
                         // 다시 읽거나 셀을 맞추는 도중 사용자 코드 예외로 멈췄다. 활성 셀이 옛 배치에 남을 수 있으므로 모두 다시 바인딩하는 리로드가 다음 갱신에 맞춘다.
-                        ScheduleStructuralReload();
+                        // 다시 읽다 멈췄으면 그 리로드는 반쯤 읽은 배치 대신 다시 읽기 전 화면(anchor)으로 간다.
+                        ScheduleRecoveryReload(!rebuilt, in anchor);
                     }
                 }
             }
@@ -1730,6 +1751,12 @@ namespace CyKim.Scroller
             // 델리게이트 교체·콜백 안 요청이 남아 있으면 옛 배치로 새 델리게이트를 부르지 않도록 먼저 처리한다.
             if (FlushPendingWork())
             {
+                return;
+            }
+
+            if (_rebuildFailed)
+            {
+                // 다시 읽다 멈춘 배치다(복구 리로드가 아직 다시 읽기 전, 그 리로드의 회수 콜백 안 등). 반쯤 읽은 배치로 범위를 맞추지 않고 다시 읽은 뒤 맞춘다.
                 return;
             }
 

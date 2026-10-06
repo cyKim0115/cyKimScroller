@@ -10,6 +10,11 @@ namespace CyKim.Scroller
         // (그 작업이 대신 처리한다) 델리게이트가 바뀌었을 때 켠다. 리로드·재배치가 키 유지 여부를 정할 때 지운다.
         private bool _forceRebindOnReload;
 
+        // 키 유지 리로드·재배치가 다시 읽는 도중 사용자 코드 예외로 멈춰 배치가 반쯤 읽힌 채다(개수·크기·접두합·항목 ID가 서로 맞지 않는다).
+        // 델리게이트를 끝까지 다시 읽으면(복구 리로드 등) 지운다. 켜져 있는 동안 그 배치에서 화면 항목을 읽거나 범위를 맞추지 않고,
+        // 코드로 옮기는 요청은 복구 리로드를 먼저 처리한다 (RecoverBeforeMove).
+        private bool _rebuildFailed;
+
         // 키 유지 리로드 작업 목록 (용량을 재사용해 할당하지 않는다). 옛 활성 셀마다 다시 읽기 전 화면 위치(셀 시작 − 뷰포트 시작)와,
         // 새 활성 범위의 슬롯마다 그 자리로 옮기기로 한 옛 셀 번호(-1 = 비었음).
         private readonly List<float> _preservedOffsets = new List<float>(32);
@@ -29,12 +34,15 @@ namespace CyKim.Scroller
         /// <remarks>
         /// 셀을 맞추기 전에 사용자 코드(미룬 정리의 표시 끝, 트윈 멈춤 알림, 델리게이트)가 부른 <see cref="RefreshCells"/>(그 안에서 닫은 갱신만 있는 배치 포함)는
         /// 새 인덱스로 보고 맞춘 뒤 남은 셀에 부른다 (델리게이트는 이미 새 데이터다). 다시 읽는 도중 사용자 코드 예외로 멈추면 활성 셀이 옛 배치에 남을 수 있으므로
-        /// 모두 다시 바인딩하는 앵커 보존 리로드를 미뤄 다음 갱신에 맞춘다. 키 유지 재배치(<see cref="ApplyRelayout"/>)도 같은 규칙이다.
+        /// 모두 다시 바인딩하는 앵커 보존 리로드를 미뤄 다음 갱신에 맞춘다(다시 읽다 멈췄으면 반쯤 읽은 배치 대신 다시 읽기 전 화면으로 간다, <see cref="ScheduleRecoveryReload"/>).
+        /// 셀을 맞추기 전에 사용자 코드가 닫은 배치의 미룬 정리·리로드·범위 갱신은 맞춘 뒤 범위 갱신에서 처리한다. 키 유지 재배치(<see cref="ApplyRelayout"/>)도 같은 규칙이다.
         /// </remarks>
         private void ReloadPreservingCells(ReloadAnchor anchor, float factor)
         {
             bool rebuilding = false;
+            bool rebuilt = false;
             bool completed = false;
+            CyScrollerAnchor screen = default;
             _deferRefreshes = true;
             try
             {
@@ -46,16 +54,17 @@ namespace CyKim.Scroller
                 _scrollRect.StopMovement();
 
                 // 보관한 앵커가 있으면 그쪽이 가려던 자리이므로 지금 화면 대신 그 앵커를 쓴다.
+                // 다시 읽기 전 화면은 늘 적어 둔다. 다시 읽다 멈추면 복구 리로드가 반쯤 읽은 배치 대신 이 앵커로 간다.
                 bool keepVisible = !_hasPendingAnchor && (anchor == ReloadAnchor.FirstVisible || anchor == ReloadAnchor.LastVisible);
-                float overscroll = 0f;
-                CyScrollerAnchor visible = keepVisible ? CaptureLayoutAnchor(anchor == ReloadAnchor.LastVisible, out overscroll) : default;
+                screen = CaptureLayoutAnchor(anchor == ReloadAnchor.LastVisible, out float overscroll);
                 RecordPreservedCellOffsets();
 
                 rebuilding = true;
                 RebuildLayout(true);
+                rebuilt = true;
                 _hasLoaded = true;
                 _lastViewportExtent = ScrollRectSize;
-                MoveAfterReload(anchor, factor, keepVisible, in visible, overscroll);
+                MoveAfterReload(anchor, factor, keepVisible, in screen, overscroll);
 
                 ReconcilePreservedCells();
                 completed = true;
@@ -66,12 +75,46 @@ namespace CyKim.Scroller
                 _deferredRefreshes.Clear();
                 if (rebuilding && !completed)
                 {
-                    ScheduleStructuralReload();
+                    ScheduleRecoveryReload(!rebuilt, in screen);
                 }
             }
 
             UpdateActiveRange();
             ApplyScrollbarVisibility();
+        }
+
+        /// <summary>
+        /// 키 유지 리로드·재배치가 사용자 코드 예외로 멈췄을 때 모두 다시 바인딩하는 앵커 보존 리로드를 미룬다(<see cref="ScheduleStructuralReload"/>).
+        /// 다시 읽는 도중 멈췄으면(rebuildFailed) 배치가 반쯤 읽힌 채다(<see cref="_rebuildFailed"/>). 복구 리로드가 그 배치에서 화면을 읽지 않도록
+        /// 다시 읽기 전 화면 앵커(screen)를 보관한 앵커로 넘긴다. 이미 보관한 앵커가 있으면 그쪽이 가려던 자리이므로 그대로 둔다. 사용자 코드를 부르지 않는다.
+        /// </summary>
+        private void ScheduleRecoveryReload(bool rebuildFailed, in CyScrollerAnchor screen)
+        {
+            if (rebuildFailed)
+            {
+                _rebuildFailed = true;
+                if (!_hasPendingAnchor)
+                {
+                    _pendingAnchor = screen;
+                    _hasPendingAnchor = true;
+                }
+            }
+
+            ScheduleStructuralReload();
+        }
+
+        /// <summary>
+        /// 코드로 옮기는 요청(<see cref="ScrollPosition"/>·<see cref="NormalizedScrollPosition"/> 대입, 점프·<see cref="ScrollIntoView"/>·<see cref="Snap"/>)이
+        /// 위치를 계산하거나 보관한 앵커를 버리기 전에 부른다. 다시 읽다 멈춘 배치(<see cref="_rebuildFailed"/>)면 복구 리로드를 먼저 처리해
+        /// 보관한 앵커(다시 읽기 전 화면)로 배치를 다시 만들고, 요청은 다시 읽은 배치에서 위치를 정한다.
+        /// 범위 갱신·배치 중이면 처리하지 못한다. 그때는 복구 리로드가 요청이 옮긴 콘텐츠 위치를 지킨다(<see cref="ReloadNow"/>).
+        /// </summary>
+        private void RecoverBeforeMove()
+        {
+            if (_rebuildFailed)
+            {
+                FlushPendingWork();
+            }
         }
 
         /// <summary>다시 읽기 전에 옛 활성 셀마다 화면 위치(셀 시작 − 뷰포트 시작)를 적는다. 루프에서 같은 항목의 사본을 고를 때 쓴다. 할당 없음.</summary>

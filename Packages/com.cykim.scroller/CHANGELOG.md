@@ -2,6 +2,17 @@
 
 이 패키지의 변경 내역. 형식은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/), 버전은 [SemVer](https://semver.org/lang/ko/)를 따른다.
 
+## [Unreleased]
+
+### Fixed
+- 키 유지 리로드·재배치(`PreserveCellsById`)가 다시 읽는 도중 델리게이트 예외로 멈추면(개수가 늘어 크기 버퍼를 다시 만든 뒤 `GetCellViewSize`가 던지는 경우 등)
+  다음 갱신의 복구 리로드가 반쯤 읽은 배치에서 화면을 읽다 `IndexOutOfRangeException`을 내던 문제 (0.2.0부터).
+  이제 다시 읽기 전 화면 앵커를 보관한 앵커로 넘겨 복구 리로드가 그 자리로 간다 (복구 전까지 `CaptureAnchor`도 이 앵커를 돌려준다).
+  복구 전에 코드로 옮기면(`ScrollPosition`·`NormalizedScrollPosition` 대입, 점프·`ScrollIntoView`·`Snap`) 복구 리로드를 먼저 처리한 뒤 다시 읽은 배치에서 위치를 정하고,
+  배치 안이라 먼저 처리할 수 없으면 복구 리로드가 그 요청이 옮긴 위치를 지킨다. 복구 전까지는 반쯤 읽은 배치로 범위를 맞추지 않는다
+- 키 유지 리로드·재배치가 다시 읽는 도중 델리게이트가 닫은 배치(`BeginUpdates`/`EndUpdates`)에 미룬 `Clear*`·리로드 요청·범위 갱신이 있으면
+  배치 끝에서 반쯤 읽은 배치로 범위를 맞춰 셀을 모두 다시 바인딩하거나 예외를 내던 문제 (0.2.0부터). 이제 셀을 새 인덱스로 맞춘 뒤 처리한다
+
 ## [0.2.0] - 2026-10-06
 
 ### Added

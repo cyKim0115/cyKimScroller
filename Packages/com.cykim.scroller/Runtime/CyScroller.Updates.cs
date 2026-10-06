@@ -61,6 +61,7 @@ namespace CyKim.Scroller
 
         // 증분 변경을 적용하거나 키 유지 리로드·재배치로 다시 읽는 동안(활성 셀이 아직 옛 인덱스일 수 있는 동안) 사용자 코드가 부른 RefreshCells
         // (그 안에서 끝난 갱신만 있는 배치 포함). 셀을 새 인덱스로 맞춘 뒤 남은 셀에 배치의 마스크와 OR로 합쳐 부른다 (용량을 재사용한다).
+        // 켜져 있는 동안 끝난 배치는 범위 갱신을 하지 않는다 (배치가 반쯤 읽혔을 수 있다, FinishUpdates).
         private bool _deferRefreshes;
         private readonly List<UpdateOp> _deferredRefreshes = new List<UpdateOp>(4);
 
@@ -491,7 +492,9 @@ namespace CyKim.Scroller
 
             // 알림 핸들러가 새 배치를 열었으면 그 배치가 끝날 때 처리한다.
             // 콜백 안(범위 갱신 중)에서 끝난 배치는 범위를 맞출 수 없으므로 미룬 범위 갱신을 지우지 않고 바깥 갱신에 남긴다 (지우면 바깥 배치가 미룬 것까지 잃는다).
-            if (_updateDepth == 0 && !_inRangeUpdate && (_rangeUpdateDeferred || HasPendingWork))
+            // 키 유지 리로드·재배치가 셀을 새 인덱스로 맞추기 전(다시 읽는 중의 델리게이트·트윈 멈춤 알림 안)에 끝난 배치도 같다. 배치가 반쯤 읽혔을 수 있으므로
+            // 그 리로드·재배치가 셀을 맞춘 뒤 범위 갱신에서 미룬 정리·리로드까지 처리한다.
+            if (_updateDepth == 0 && !_inRangeUpdate && !_deferRefreshes && (_rangeUpdateDeferred || HasPendingWork))
             {
                 _rangeUpdateDeferred = false;
                 UpdateActiveRange();

@@ -1096,6 +1096,271 @@ namespace CyKim.Scroller.Tests
             }
         }
 
+        /// <summary>키 유지로 다시 읽는 진입점.</summary>
+        public enum PreservingEntry
+        {
+            FirstVisible,
+            LastVisible,
+            KeepingPosition,
+        }
+
+        private static void ReloadPreserving(CyScroller scroller, PreservingEntry entry)
+        {
+            switch (entry)
+            {
+                case PreservingEntry.FirstVisible:
+                    scroller.ReloadData(ReloadAnchor.FirstVisible);
+                    break;
+                case PreservingEntry.LastVisible:
+                    scroller.ReloadData(ReloadAnchor.LastVisible);
+                    break;
+                default:
+                    scroller.ReloadDataKeepingPosition();
+                    break;
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator SizeExceptionDuringPreservingReloadRebuild_RecoversToScreenBeforeRebuild()
+        {
+            yield return RunPreservingRebuildException(PreservingEntry.FirstVisible);
+        }
+
+        [UnityTest]
+        public IEnumerator SizeExceptionDuringTrailingPreservingReloadRebuild_RecoversToScreenBeforeRebuild()
+        {
+            yield return RunPreservingRebuildException(PreservingEntry.LastVisible);
+        }
+
+        [UnityTest]
+        public IEnumerator SizeExceptionDuringPreservingRelayoutRebuild_RecoversToScreenBeforeRebuild()
+        {
+            yield return RunPreservingRebuildException(PreservingEntry.KeepingPosition);
+        }
+
+        /// <summary>
+        /// 항목 100개를 start 위치에서 보다가 앞에 하나를 넣고, entry로 다시 읽는 도중 새 50번 크기 질의가 던지게 한다. 개수가 크기 버퍼 용량(100)을 넘게 늘어
+        /// 배치가 반쯤 읽힌 채 남는다(새 버퍼라 접두합은 0, 항목 ID 배열은 옛 길이). 예외는 호출자에게 올라가고 위치는 그대로다. 멈춘 뒤 활성 셀 기록을 돌려준다.
+        /// </summary>
+        private List<CellRecord> FailPreservingRebuild(PreservingEntry entry, float start)
+        {
+            _harness = CreateHarness(100);
+            CyScroller scroller = _harness.Scroller;
+            scroller.ScrollPosition = start;
+            bool armed = false;
+            _harness.Data.GetCellViewSizeHook = (s, index) =>
+            {
+                if (armed && index == 50)
+                {
+                    armed = false;
+                    throw new System.InvalidOperationException("크기 질의 예외");
+                }
+            };
+
+            _harness.Data.Insert(0, NextItem(), 100f);
+            armed = true;
+            Assert.Throws<System.InvalidOperationException>(() => ReloadPreserving(scroller, entry));
+            Assert.IsFalse(armed);
+            Assert.AreEqual(start, scroller.ScrollPosition, EPSILON, $"{entry}: 다시 읽다 멈춰 위치는 그대로다");
+            return Record(_harness);
+        }
+
+        /// <summary>
+        /// 키 유지 리로드(FirstVisible·LastVisible)·재배치(ReloadDataKeepingPosition)가 다시 읽다 멈춘다(<see cref="FailPreservingRebuild"/>).
+        /// 다음 갱신의 복구 리로드는 반쯤 읽은 배치에서 화면을 읽지 않고 다시 읽기 전 화면(10번 위 50 = 뷰포트 끝 14번 끝 50 전)으로 가서 모두 다시 바인딩한다.
+        /// </summary>
+        private IEnumerator RunPreservingRebuildException(PreservingEntry entry)
+        {
+            List<CellRecord> before = FailPreservingRebuild(entry, 1050f);
+            CyScroller scroller = _harness.Scroller;
+            int binds = _harness.Data.GetCellViewCalls;
+
+            yield return null;
+
+            Assert.AreEqual(101, scroller.NumberOfCells, entry.ToString());
+            Assert.AreEqual(1150f, scroller.ScrollPosition, EPSILON, $"{entry}: 다시 읽기 전 화면의 항목(10번 → 11번)과 오프셋");
+            AssertConsistent(_harness, entry.ToString());
+            AssertAllRebound(_harness, before, binds, entry.ToString());
+        }
+
+        /// <summary>다시 읽다 멈춘 뒤 복구 리로드 전에 코드로 옮기는 요청.</summary>
+        public enum MoveBeforeRecovery
+        {
+            ScrollPosition,
+            NormalizedScrollPosition,
+            Jump,
+            Snap,
+            ScrollPositionInBatch,
+        }
+
+        [UnityTest]
+        public IEnumerator ScrollPositionBeforeRecovery_AppliesOnRecoveredLayout()
+        {
+            yield return RunMoveBeforeRecovery(MoveBeforeRecovery.ScrollPosition);
+        }
+
+        [UnityTest]
+        public IEnumerator NormalizedScrollPositionBeforeRecovery_AppliesOnRecoveredLayout()
+        {
+            yield return RunMoveBeforeRecovery(MoveBeforeRecovery.NormalizedScrollPosition);
+        }
+
+        [UnityTest]
+        public IEnumerator JumpBeforeRecovery_AppliesOnRecoveredLayout()
+        {
+            yield return RunMoveBeforeRecovery(MoveBeforeRecovery.Jump);
+        }
+
+        [UnityTest]
+        public IEnumerator SnapBeforeRecovery_AppliesOnRecoveredLayout()
+        {
+            yield return RunMoveBeforeRecovery(MoveBeforeRecovery.Snap);
+        }
+
+        [UnityTest]
+        public IEnumerator ScrollPositionInBatchBeforeRecovery_KeepsMovedPosition()
+        {
+            yield return RunMoveBeforeRecovery(MoveBeforeRecovery.ScrollPositionInBatch);
+        }
+
+        /// <summary>
+        /// 키 유지 리로드가 다시 읽다 멈춘 뒤(<see cref="FailPreservingRebuild"/>) 다음 프레임 전에 코드로 옮긴다. 이동 요청이 보관한 앵커(다시 읽기 전 화면)를 버려도
+        /// 복구 리로드는 반쯤 읽은 배치에서 화면을 읽지 않는다. 배치 밖 요청은 복구 리로드를 먼저 처리한 뒤 다시 읽은 배치에서 위치를 정하고(정규화 위치·스냅 대상도 새 배치 기준),
+        /// 배치 안 요청은 배치 끝의 복구 리로드가 그 요청이 옮긴 콘텐츠 위치를 지킨다. 셀은 모두 다시 바인딩하고, 다음 프레임에 보관한 앵커로 되돌아가지 않는다.
+        /// </summary>
+        private IEnumerator RunMoveBeforeRecovery(MoveBeforeRecovery move)
+        {
+            // 스냅은 복구한 화면(11번 위 80 = 1180)에서 가운데에 걸친 13번에 맞춰 움직이도록 오프셋 80에서 시작한다.
+            List<CellRecord> before = FailPreservingRebuild(PreservingEntry.FirstVisible, move == MoveBeforeRecovery.Snap ? 1080f : 1050f);
+            CyScroller scroller = _harness.Scroller;
+            int snappedDataIndex = -1;
+            scroller.ScrollerSnapped += (s, cellIndex, dataIndex, view) => snappedDataIndex = dataIndex;
+
+            float expected;
+            switch (move)
+            {
+                case MoveBeforeRecovery.ScrollPosition:
+                    scroller.ScrollPosition = 500f;
+                    expected = 500f;
+                    break;
+                case MoveBeforeRecovery.NormalizedScrollPosition:
+                    // 다시 읽은 배치 기준 스크롤 거리(101 × 100 − 뷰포트 400)의 절반. 반쯤 읽은 배치(옛 콘텐츠 길이)로 계산하면 4800이다.
+                    scroller.NormalizedScrollPosition = 0.5f;
+                    expected = 4850f;
+                    break;
+                case MoveBeforeRecovery.Jump:
+                    scroller.JumpToDataIndex(30, 0f, 0f, false, TweenType.Immediate, 0f);
+                    expected = 3000f;
+                    break;
+                case MoveBeforeRecovery.Snap:
+                    // 가운데(1380)에 걸친 13번의 가운데(1350)를 뷰포트 가운데에 맞춘다.
+                    scroller.SnapTweenType = TweenType.Immediate;
+                    scroller.Snap();
+                    expected = 1150f;
+                    break;
+                default:
+                    // 배치 안에서는 복구 리로드를 먼저 처리할 수 없다. 배치 끝의 복구 리로드가 대입한 위치를 지킨다.
+                    scroller.BeginUpdates();
+                    scroller.ScrollPosition = 500f;
+                    scroller.EndUpdates();
+                    expected = 500f;
+                    break;
+            }
+
+            string context = move.ToString();
+            Assert.AreEqual(101, scroller.NumberOfCells, context);
+            Assert.AreEqual(expected, scroller.ScrollPosition, EPSILON, $"{context}: 다시 읽은 배치에서 정한 위치");
+            AssertConsistent(_harness, context);
+            Assert.AreEqual(0, CountKept(_harness, before), $"{context}: 멈춘 뒤 남은 셀은 모두 다시 바인딩했다");
+            if (move == MoveBeforeRecovery.Snap)
+            {
+                Assert.AreEqual(13, snappedDataIndex, $"{context}: 다시 읽은 배치의 가운데 항목에 맞췄다");
+            }
+
+            int binds = _harness.Data.GetCellViewCalls;
+
+            yield return null;
+
+            Assert.AreEqual(expected, scroller.ScrollPosition, EPSILON, $"{context}: 다음 프레임에 다시 읽기 전 화면으로 돌아가지 않는다");
+            Assert.AreEqual(binds, _harness.Data.GetCellViewCalls, $"{context}: 다음 프레임에 다시 바인딩하지 않는다");
+            AssertConsistent(_harness, context + " next frame");
+        }
+
+        /// <summary>다시 읽는 중 델리게이트가 닫는 배치에 담는 것.</summary>
+        public enum BatchWork
+        {
+            ClearRecycled,
+            ReloadRequest,
+            DeferredRangeUpdate,
+        }
+
+        /// <summary>
+        /// 키 유지 리로드·재배치가 다시 읽는 도중(새 50번 크기를 물을 때) 델리게이트가 배치를 열고 닫는다. 배치에는 미룬 정리(<see cref="CyScroller.ClearRecycled"/>),
+        /// 리로드 요청, 미룬 범위 갱신(<see cref="CyScroller.ScrollPosition"/> 대입) 중 하나가 있다. 개수가 크기 버퍼 용량을 넘게 늘어 배치는 아직 반쯤 읽힌 채다.
+        /// 배치 끝은 그 배치로 범위를 맞추지 않고, 미룬 작업은 셀을 새 인덱스로 맞춘 뒤 처리한다(리로드 요청은 키 유지로 한 번 더 다시 읽는다).
+        /// 위치는 다시 읽기 전 화면을 지키고 활성 셀은 다시 바인딩하지 않고 남는다.
+        /// </summary>
+        [Test]
+        public void BatchClosedByDelegateDuringPreservingRebuild_WaitsForReconcile(
+            [Values(PreservingEntry.FirstVisible, PreservingEntry.KeepingPosition)] PreservingEntry entry, [Values] BatchWork work)
+        {
+            _harness = CreateHarness(100);
+            CyScroller scroller = _harness.Scroller;
+            scroller.ScrollPosition = 1050f;
+            scroller.ScrollPosition = 1000f;   // 10~13번 표시, 14번을 보이던 셀은 풀에 있다
+            Assert.Greater(scroller.GetRecycledCellCount(), 0, "풀에 셀이 있다");
+
+            bool armed = false;
+            int countQueries = 0;
+            _harness.Data.GetNumberOfCellsHook = _ => countQueries++;
+            _harness.Data.GetCellViewSizeHook = (s, index) =>
+            {
+                if (!armed || index != 50)
+                {
+                    return;
+                }
+
+                armed = false;
+                s.BeginUpdates();
+                switch (work)
+                {
+                    case BatchWork.ClearRecycled:
+                        s.ClearRecycled();
+                        break;
+                    case BatchWork.ReloadRequest:
+                        s.ReloadData(ReloadAnchor.FirstVisible);
+                        break;
+                    default:
+                        s.ScrollPosition = 0f;
+                        break;
+                }
+
+                s.EndUpdates();
+            };
+
+            List<CellRecord> before = Record(_harness);
+            int binds = _harness.Data.GetCellViewCalls;
+            _harness.Data.Insert(0, NextItem(), 100f);
+            armed = true;
+            ReloadPreserving(scroller, entry);
+
+            string context = $"{entry} {work}";
+            Assert.IsFalse(armed, $"{context}: 다시 읽는 중에 배치를 닫았다");
+            Assert.AreEqual(1100f, scroller.ScrollPosition, EPSILON, $"{context}: 같은 항목(10번 → 11번)");
+            AssertConsistent(_harness, context);
+            AssertCellsPreserved(_harness, before, binds, context);
+            switch (work)
+            {
+                case BatchWork.ClearRecycled:
+                    Assert.AreEqual(0, scroller.GetRecycledCellCount(), $"{context}: 미룬 정리를 처리했다");
+                    break;
+                case BatchWork.ReloadRequest:
+                    // 다시 읽기 한 번 + 배치 끝을 기다린 리로드 요청 한 번 (배치 끝은 다시 읽을 요청이 있어 개수를 맞춰 보지 않는다).
+                    Assert.AreEqual(2, countQueries, $"{context}: 리로드 요청을 셀을 맞춘 뒤 처리했다");
+                    break;
+            }
+        }
+
         [Test]
         public void EndUpdatesCountMismatch_ReplacedByAnchorReload_RebindsEverything()
         {
