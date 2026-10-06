@@ -39,7 +39,7 @@
 | 7 | 공개 앵커·상태 API, `ReloadData(ReloadAnchor)`, 준비 전 요청의 지연 복원 | 높음 | S | 중: 트윈 중 복원, 루프 가운데 세트 매핑 | 2·6 | AND·FLT·Web |
 | 8 | 부분 갱신 `RefreshCells(changeMask)`·`ReloadCellView` (활성 셀만, 크기 불변) | 높음 | S | 낮음: 활성 셀에만 전달됨을 문서화 | — | AND·iOS |
 | 9 | 증분 구조 변경 `Begin/EndUpdates`, `InsertCells/RemoveCells/MoveCell`, Reconcile | 높음 | M | 높음: 인덱스 장부·재진입 → 기준 모델 비교 테스트 | 2·7 | AND·iOS |
-| 10 | 셀 크기 변경과 스크롤 보정 (`SetCellViewSize`, 애니메이션, `ResizeAnchor`) | 높음 | M | 중: 루프 SetCount 변화, 탄성 구간 | 2·3 | iOS·Web·FLT |
+| 10 | 셀 크기 변경과 스크롤 보정 (`SetCellViewSize`, 애니메이션, `ResizeAnchor`) — **브랜치 구현(미병합)**: `feature/cell-resize`, API는 `ResizeCellView`(크기는 델리게이트 기준) | 높음 | M | 중: 루프 SetCount 변화, 탄성 구간 | 2·3 | iOS·Web·FLT |
 | 11 | 손을 뗄 때 정하는 스냅 전략 (착지 예측·한 칸·페이지, 속도가 끊기지 않는 트윈) **사용자 선택 필요(기본 감각)** | 높음 | M | 중: 감각 튜닝, 끝단 오버슈트 이징 | 2 | AND·iOS·FLT |
 | 12 | 끝 근접 이벤트 `ScrollerNearEdge`, 범위 로더 헬퍼 | 중 | S | 낮음: 래치, 콘텐츠가 뷰포트보다 짧은 경우 | 7·9 | Web·AND |
 | 13 | 채팅 모드: 짧은 콘텐츠 끝 정렬, 끝 따라가기, `IsAtEnd`, 점프 없는 프리펜드(앞쪽 삽입) **사용자 선택 필요** | 높음 | M | 중: 드래그·관성 중 프리펜드 | 2·7·9·10 | Web·AND·FLT |

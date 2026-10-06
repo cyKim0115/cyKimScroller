@@ -16,6 +16,8 @@ uGUI `ScrollRect` 위에서 동작하는 가상화 스크롤러. 보이는 구�
 - 부분 갱신: 내용만 바뀐 항목은 `RefreshCells`(사용자 정의 changeMask, 배치 안에서는 OR로 모아 한 번)로 그 항목의 활성 셀만 다시 그리고,
   크기·셀 종류가 바뀐 항목은 `ReloadCellView`로 그 항목만 다시 받는다
 - 키 유지 리로드(`PreserveCellsById`, 옵트인): 바뀐 자리를 모를 때 위치를 지키며 다시 읽어도 항목 ID가 같은 셀은 다시 바인딩하지 않고 새 자리로 옮긴다
+- 셀 크기 변경: `ResizeCellView`는 셀을 다시 바인딩하지 않고 크기만 바꾼다(바로 또는 애니메이션). 셀 위·아래 가장자리나 보던 화면을 지키고,
+  애니메이션 중간 걸음은 접두합을 다시 더하지 않아 항목 수와 무관하게 활성 셀 수만큼 든다
 - 스크롤 핫패스 GC 할당 0 (PlayMode 테스트로 검증, 셀 훅을 켠 상태 포함)
 
 Unity 6000.0 이상, uGUI 2.0 이상 (6000.6.0f1 / uGUI 2.6.0에서 검증).
@@ -78,6 +80,7 @@ public class InventoryList : MonoBehaviour, ICyScrollerDelegate
 크기는 그대로이고 보이는 셀 내용만 바뀌었으면 `RefreshActiveCellViews()`가 가장 싸다.
 단 이 메서드는 활성 셀마다 `RefreshCellView()`를 부르기만 하므로, 셀 뷰가 이를 재정의해 자기 데이터로 다시 그려야 한다.
 어느 항목이 바뀌었는지 알면 `RefreshCells(dataIndex, count, changeMask)`가 그 항목의 활성 셀에만 부른다 (아래 [부분 갱신](#부분-갱신)).
+펼치기·접기처럼 크기만 바뀌었으면 `ResizeCellView(dataIndex)`가 셀을 그대로 두고 크기만 바꾼다 (아래 [셀 크기 변경](#셀-크기-변경)).
 
 ```csharp
 public class ItemCellView : CyScrollerCellView
@@ -100,6 +103,7 @@ public class ItemCellView : CyScrollerCellView
 | 항목 ID·앵커 | `ICyScrollerItemIdProvider.GetItemId`, `FindDataIndexForItemId(itemId)`, `CaptureAnchor(trailing)`, `RestoreAnchor(in anchor)`, `CyScrollerAnchor`, `ReloadAnchor`(Factor·Start·End·FirstVisible·LastVisible), `PreserveCellsById`(키 유지 리로드) |
 | 증분 변경 | `InsertCells(dataIndex, count)`, `RemoveCells(dataIndex, count)`, `MoveCell(fromDataIndex, toDataIndex)`, `BeginUpdates()`, `EndUpdates()` |
 | 부분 갱신 | `RefreshCells(dataIndex, count, changeMask)`, `ReloadCellView(dataIndex)`, `RefreshActiveCellViews(changeMask)` |
+| 크기 변경 | `ResizeCellView(dataIndex, duration, tweenType, anchor)`, `ResizeAnchor`(Auto·Start·End), `IsResizing` |
 | 이동 | `JumpToDataIndex(dataIndex, scrollerOffset, cellOffset, useSpacing, tweenType, tweenTime, onComplete, loopJumpDirection)`, `ScrollIntoView(dataIndex, align, margin, tweenType, tweenTime, onComplete, loopJumpDirection)`, `Snap()`, `InterruptTween()`, `GetJumpTargetPosition(...)` |
 | 위치 | `ScrollPosition`, `NormalizedScrollPosition`, `ScrollSize`, `ScrollRectSize`, `ContentSize`, `Velocity`, `LinearVelocity` |
 | 범위 | `NumberOfCells`, `NumberOfCellSlots`, `StartDataIndex`/`EndDataIndex`, `StartCellViewIndex`/`EndCellViewIndex`, `ActiveCellViews`, `GetCellViewAtDataIndex`, `GetCellViewAtCellIndex`, `IsDataIndexFullyVisible(dataIndex, margin)` |
@@ -108,7 +112,7 @@ public class ItemCellView : CyScrollerCellView
 | 정리 | `ClearActive()`, `ClearRecycled()`, `ClearAll()`, `GetRecycledCellCount()` |
 | 이벤트 | `CellViewVisibilityChanged`, `CellViewWillDisplay`, `CellViewDidEndDisplay`, `CellViewPositionChanged`, `CellViewInstantiated`, `CellViewReused`, `CellViewWillRecycle`, `ScrollerScrolled`, `ScrollerSnapped`, `ScrollerScrollingChanged`, `ScrollerTweeningChanged` |
 | 위치 훅 | `NotifyCellPositions`, `CellPositionPivot` |
-| 셀 뷰 | `DataIndex`, `CellIndex`, `ItemId`, `HasItemId`, `Active`, `IsBound`, `IsDisplayed`, `BindVersion`, `RefreshCellView()`, `RefreshCellView(changeMask)`, `OnRecycled()`, `OnBecameVisible()`, `OnBecameHidden()`, `OnViewportPositionChanged(normalizedOffset)`, `OnDataIndexChanged(previousDataIndex)` |
+| 셀 뷰 | `DataIndex`, `CellIndex`, `ItemId`, `HasItemId`, `Active`, `IsBound`, `IsDisplayed`, `BindVersion`, `RefreshCellView()`, `RefreshCellView(changeMask)`, `RequestResize(duration, tweenType, anchor)`, `OnRecycled()`, `OnBecameVisible()`, `OnBecameHidden()`, `OnViewportPositionChanged(normalizedOffset)`, `OnDataIndexChanged(previousDataIndex)` |
 
 `scrollerOffset` / `cellOffset`은 0 = 앞(위·왼쪽), 0.5 = 가운데, 1 = 뒤. 가운데 정렬은 `JumpToDataIndex(i, 0.5f, 0.5f)`.
 
@@ -267,6 +271,36 @@ public class MessageCellView : CyScrollerCellView
   크기가 바뀌면 삽입처럼 보던 화면을 지킨다. 활성 셀이 없으면 크기(와 ID)만 갱신한다.
 - `RefreshActiveCellViews(changeMask)`는 모든 항목에 `RefreshCells`를 부른 것과 같다. 무인자 `RefreshActiveCellViews()`는 지금처럼 활성 셀마다 `RefreshCellView()`를 바로 부른다.
 
+### 셀 크기 변경
+
+펼치기·접기처럼 셀 종류와 내용은 그대로이고 크기만 바뀌면, 델리게이트가 돌려줄 크기를 먼저 바꾼 뒤 `ResizeCellView`를 부른다.
+그 항목의 크기만 다시 묻고 셀은 다시 바인딩하지 않는다(`BindVersion` 그대로). `duration`을 주면 그 시간 동안 크기를 바꾼다.
+
+```csharp
+public void Toggle(int dataIndex)
+{
+    _items[dataIndex].Expanded = !_items[dataIndex].Expanded;   // GetCellViewSize가 새 크기를 돌려준다
+
+    // 0.25초 동안 펼친다. 셀의 위쪽 가장자리를 화면에 고정해 아래로 펼쳐진다.
+    _scroller.ResizeCellView(dataIndex, 0.25f, TweenType.EaseOutCubic, ResizeAnchor.Start);
+}
+```
+
+셀 안 버튼에서 부르면 `RequestResize(...)`가 그 셀의 `DataIndex`로 같은 일을 한다.
+
+| `ResizeAnchor` | 화면에서 지키는 것 |
+|---|---|
+| `Auto` (기본) | 다른 증분 변경과 같다. 뷰포트 맨 앞 항목보다 앞에서 생긴 변화만 보정하고, 맨 앞 항목 자신이거나 그 뒤면 옮기지 않는다 |
+| `Start` | 그 셀의 시작(위·왼쪽) 가장자리. 셀은 아래·오른쪽으로 늘어나거나 줄어든다 |
+| `End` | 그 셀의 끝(아래·오른쪽) 가장자리. 셀은 위·왼쪽으로 늘어나거나 줄어든다 |
+
+- 결과는 스크롤 범위로 자른다. 점프·스냅·`ScrollIntoView` 정렬이 유지되는 중이면 정렬이 먼저이고, 진행 중인 트윈은 새 배치의 목표로 이어 가 완료 콜백을 한 번 부른다.
+- 애니메이션은 LateUpdate에서 매 프레임 크기를 바꾸고 기준에 맞춰 위치를 옮긴다(드래그 중이면 손가락 기준점도). `IsResizing`이 진행 여부다.
+  같은 항목에 새 요청이 오면 지금 크기에서 이어 가고, 그 항목이 지워지거나 `ReloadCellView`·리로드로 크기를 다시 읽으면 애니메이션을 버리고 그 크기를 따른다.
+- 크기의 기준은 계속 델리게이트다. 크기 값을 직접 받는 메서드는 없다(다음 리로드 때 델리게이트 값으로 돌아가지 않게).
+- 루프 모드에서는 애니메이션 없이 바로 바꾸고 위치를 지키는 재배치로 맞춘다(활성 셀을 다시 바인딩하고 기준은 `Auto`).
+  델리게이트·셀 이벤트 콜백 안에서 부르면 다른 증분 변경처럼 범위 갱신 뒤 앵커 보존 리로드로 바뀐다. 자세한 규칙은 아래 [증분 변경 동작](#증분-변경-동작).
+
 ### 키 유지 리로드
 
 바뀐 자리를 모르고 목록을 통째로 다시 받는 경우(서버 응답으로 목록 교체 등)에도, 델리게이트가 항목 ID를 주고 `PreserveCellsById`를 켜면(기본 꺼짐, 인스펙터 **Reload → Preserve Cells By Id**)
@@ -305,7 +339,7 @@ private void OnListArrived(List<Message> latest)
 
 - **content를 스크롤러가 소유한다.** 앵커·피벗·크기를 실행 시 다시 설정하고, content의 `LayoutGroup`·`ContentSizeFitter`는 끈다.
 - **셀 루트 RectTransform은 스크롤러가 배치한다.** 스케일·회전 같은 효과는 자식에 준다.
-- 셀 크기는 `GetCellViewSize`가 정한다. 셀이 스스로 크기를 바꾸면 `ReloadDataKeepingPosition()`(한 항목이면 `ReloadCellView(dataIndex)`)으로 다시 계산한다.
+- 셀 크기는 `GetCellViewSize`가 정한다. 셀이 스스로 크기를 바꾸면 `ReloadDataKeepingPosition()`(한 항목이면 `ResizeCellView(dataIndex)`, 셀 종류도 바뀌면 `ReloadCellView(dataIndex)`)으로 다시 계산한다.
 - 점프·스냅·`ScrollIntoView` 뒤 정렬은 사용자가 드래그·휠·스크롤바로 움직이거나 `ScrollPosition`을 직접 바꾸기 전까지 유지된다
   (첫 프레임 Canvas 크기 확정, 화면 회전에도 같은 셀이 같은 자리에 있다).
 - 트윈은 목표 좌표를 저장하지 않고 요청(셀·정렬 위치·여백)으로 매 프레임 지금 배치에서 다시 계산한다.
@@ -353,7 +387,8 @@ private void OnListArrived(List<Message> latest)
 - 루프는 뷰포트·미리보기 길이를 덮고도 양쪽에 한 사이클씩 남도록 세트 수(최소 5)를 정한다. 셀 크기가 모두 0이면 루프하지 않는다.
 - ScrollRect를 끄면(스크롤 잠금) CyScroller도 입력을 무시한다. 코드로 시작한 점프는 계속 진행된다.
 - `ActiveCellViews`는 `IReadOnlyList`다. GC를 피하려면 `foreach` 대신 `for` + 인덱서로 순회한다.
-- Profiler에서 `CyScroller.UpdateActiveRange`(활성 범위 갱신, 셀 바인딩 포함), `CyScroller.Relayout`(위치 유지 재배치), `CyScroller.ApplyUpdates`(증분 변경 적용) 마커로 비용을 확인할 수 있다.
+- Profiler에서 `CyScroller.UpdateActiveRange`(활성 범위 갱신, 셀 바인딩 포함), `CyScroller.Relayout`(위치 유지 재배치), `CyScroller.ApplyUpdates`(증분 변경 적용),
+  `CyScroller.Resize`(셀 크기 애니메이션 한 걸음) 마커로 비용을 확인할 수 있다.
 
 ### 증분 변경 동작
 
@@ -410,6 +445,11 @@ private void OnListArrived(List<Message> latest)
     리로드를 한 직후 부른 `RefreshCells`는 남은 셀에 그대로 전달된다. 키 유지 리로드·재배치가 셀을 맞추기 전에 사용자 코드(트윈 멈춤 알림, 다시 읽는 중의 델리게이트 등)가
     부른 `RefreshCells`(그 안에서 닫은 갱신만 있는 배치 포함)는 새 인덱스로 보고 맞춘 뒤 부른다.
   - 사용자 코드 예외로 셀 맞추기가 멈추면 다음 갱신에 모두 다시 바인딩하는 앵커 보존 리로드로 데이터와 맞춘다.
+- **크기 변경.** `ResizeCellView`는 배치에 기록되는 연산이다(순차 의미론). 바로 바꾸면 다시 받기처럼 그 자리 크기(와 항목 ID)를 배치 끝에 묻되 셀은 회수하지 않고 크기·위치만 바꾼다.
+  애니메이션이면 배치 끝에 최종 인덱스로 목표 크기만 묻고 지금 크기에서 시작한다. 같은 배치에서 그 항목을 지우거나 다시 받거나 크기를 다시 요청하면 앞 요청은 버린다.
+  위치는 `Auto`면 위 위치 보존 규칙을 따르고, `Start`·`End`면 배치 전 그 셀의 가장자리가 같은 화면 자리에 오게 한다(배치에 여럿이면 마지막 요청, 그 셀이 지워지면 `Auto`).
+  진행 중인 애니메이션은 증분 변경을 따라 같은 항목으로 옮겨지고, 배치가 열려 있는 동안 멈춘다. 매 걸음은 같은 경로로 크기를 바꾸고 활성 셀을 맞춘다(새로 범위에 들어온 자리만 바인딩).
+  중간 걸음은 레이아웃 접두합을 다시 더하지 않고 그 뒤 항목 위치에 변화량을 더해 계산하므로 항목 수와 무관하고, 마지막 걸음이나 다른 크기·개수 변경이 바뀐 자리부터 한 번 다시 더한다.
 - **비용.** 증분 변경은 크기·항목 ID 배열을 `Array.Copy`로 옮기고(용량이 모자랄 때만 늘린다) 삽입분만 델리게이트에 묻는다. 접두합과 ID 사전은 바뀐 가장 앞 자리부터 다시 맞춘다.
   키 유지 리로드는 모든 항목의 크기·ID를 다시 받되(O(N)) 셀은 남은 만큼 바인딩하지 않는다. 워밍업 뒤에는 어느 쪽도 할당하지 않는다.
 
