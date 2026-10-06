@@ -71,18 +71,19 @@ namespace CyKim.Scroller.Samples.Basic
         private const float FALLBACK_LINE_ALPHA = 0.7f;
 
         // 목록 셀 면에 곱할 밝은 세이지 계열 톤. 흰색에 세이지(#A6B8A6)를 섞은 톤을 기본으로, 강조·슬레이트를 옅게 섞은 톤을 사이에 둔다.
-        // 순서대로 이웃 톤끼리 구분되고, 어느 톤에서도 본문 글자 대비가 4.5 이상이다 (가장 진한 톤에서 약 7.7).
+        // 밝은 톤과 조금 진한 톤을 번갈아 둬 이웃 톤끼리 구분되고, 진한 톤도 목록이 무겁지 않게 세이지 절반 안팎으로 둔다.
+        // 어느 톤에서도 본문 글자 대비가 4.5 이상이다 (가장 진한 톤에서 약 8.9).
         private static readonly Color[] _sageTones =
         {
             new Color32(0xFA, 0xFB, 0xFA, 0xFF), // 흰색 + 세이지 6%
-            new Color32(0xDF, 0xE5, 0xDF, 0xFF), // 흰색 + 세이지 36%
-            new Color32(0xCE, 0xD8, 0xD0, 0xFF), // 흰색 + 세이지 27%, 강조 15%
-            new Color32(0xBF, 0xCC, 0xBF, 0xFF), // 흰색 + 세이지 72%
-            new Color32(0xCA, 0xD3, 0xCB, 0xFF), // 흰색 + 세이지 46%, 슬레이트 8%
+            new Color32(0xDA, 0xE2, 0xDC, 0xFF), // 흰색 + 세이지 22%, 강조 12%
             new Color32(0xE8, 0xEC, 0xE8, 0xFF), // 흰색 + 세이지 21%, 슬레이트 3%
+            new Color32(0xCF, 0xD9, 0xCF, 0xFF), // 흰색 + 세이지 54%
+            new Color32(0xDF, 0xE5, 0xDF, 0xFF), // 흰색 + 세이지 36%
+            new Color32(0xD7, 0xDE, 0xD8, 0xFF), // 흰색 + 세이지 35%, 슬레이트 7%
         };
 
-        // 캐러셀 카드 면 톤. 위 톤 가운데 패널(#F0F3F0)보다 확실히 어두운 4가지만 섞지 않고 차례로 돌려 쓴다 (패널 대비 1.14 이상, 이웃 톤 대비 1.08 이상).
+        // 캐러셀 카드 면 톤. 패널(#F0F3F0)보다 확실히 어두운 세이지 계열 4가지를 섞지 않고 차례로 돌려 쓴다 (패널 대비 1.14 이상, 이웃 톤 대비 1.08 이상).
         // 카드가 패널에 묻히지 않고 이웃 카드끼리 구분되며, 위치 훅으로 흐려진 양옆 카드는 패널 쪽으로 밝아진다.
         // 첫 톤을 가장 진하게 둬 처음 가운데에 오는 Card 0이 도드라진다.
         private static readonly Color[] _cardTones =
