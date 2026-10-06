@@ -552,6 +552,110 @@ namespace CyKim.Scroller.Tests
             Assert.AreEqual(expectedFirstAppended, layout.GetSlotStart(at), 0.01f, "붙인 첫 항목은 남은 항목 뒤에서 시작한다");
         }
 
+        /// <summary>
+        /// 크기 애니메이션처럼 몇 항목의 크기를 접두합을 다시 더하지 않고 미룰 때(SetSizeDeferred) 위치·길이·조회가 처음부터 Build한 값과 같은지 (더하는 순서가 달라 생기는 float 오차만 허용).
+        /// 미룬 변화를 접으면(CommitDeferredSizes) 비트 단위로 같다.
+        /// </summary>
+        [Test]
+        public void DeferredSizes_MatchFreshBuild_AndCommitIsExact()
+        {
+            var random = new System.Random(RANDOM_SEED + 7);
+            for (int round = 0; round < 60; round++)
+            {
+                int count = random.Next(1, 80);
+                float spacing = random.Next(0, 4) * 2.5f;
+                var model = new List<float>();
+                var layout = new CyScrollerLayout();
+                layout.SetDataCount(count);
+                for (int i = 0; i < count; i++)
+                {
+                    float size = random.Next(1, 25) * 9.5f;
+                    layout.SetSize(i, size);
+                    model.Add(size);
+                }
+
+                layout.Build(spacing, EDIT_PADDING_BEFORE, EDIT_PADDING_AFTER, false, 300f, 10f, 20f);
+
+                // 몇 항목을 여러 걸음 미룬다 (같은 항목을 거듭, 0으로 줄이기 포함).
+                int[] animated = { random.Next(count), random.Next(count), random.Next(count) };
+                for (int step = 0; step < 8; step++)
+                {
+                    int index = animated[random.Next(animated.Length)];
+                    float size = random.Next(0, 30) * 6.25f;
+                    layout.SetSizeDeferred(index, size);
+                    model[index] = size;
+                    layout.Build(spacing, EDIT_PADDING_BEFORE, EDIT_PADDING_AFTER, false, 300f, 10f, 20f);
+                    AssertNearFreshBuild(layout, model, spacing, $"round {round} step {step}");
+                }
+
+                layout.CommitDeferredSizes();
+                Assert.IsFalse(layout.HasDeferredSizes);
+                layout.Build(spacing, EDIT_PADDING_BEFORE, EDIT_PADDING_AFTER, false, 300f, 10f, 20f);
+                AssertMatchesFreshBuild(layout, model, spacing, false, 300f, $"round {round} committed");
+            }
+        }
+
+        /// <summary>미룬 크기 변화는 다른 크기·개수 변경과 루프·간격이 바뀌는 Build 전에 접힌다 (인덱스가 옮겨져도 위치가 맞다).</summary>
+        [Test]
+        public void DeferredSizes_FoldBeforeStructuralChangesAndLoopBuild()
+        {
+            var model = new List<float>();
+            var layout = new CyScrollerLayout();
+            layout.SetDataCount(10);
+            for (int i = 0; i < 10; i++)
+            {
+                layout.SetSize(i, 100f);
+                model.Add(100f);
+            }
+
+            layout.Build(0f, EDIT_PADDING_BEFORE, EDIT_PADDING_AFTER, false, 300f, 10f, 20f);
+
+            layout.SetSizeDeferred(2, 150f);
+            model[2] = 150f;
+            Assert.IsTrue(layout.HasDeferredSizes);
+            layout.InsertSizes(0, 1);
+            Assert.IsFalse(layout.HasDeferredSizes, "삽입 전에 접는다");
+            layout.SetSize(0, 40f);
+            model.Insert(0, 40f);
+            layout.Build(0f, EDIT_PADDING_BEFORE, EDIT_PADDING_AFTER, false, 300f, 10f, 20f);
+            AssertMatchesFreshBuild(layout, model, 0f, false, 300f, "insert after deferred");
+
+            layout.SetSizeDeferred(5, 20f);
+            model[5] = 20f;
+            layout.Build(0f, EDIT_PADDING_BEFORE, EDIT_PADDING_AFTER, true, 300f, 10f, 20f);
+            Assert.IsFalse(layout.HasDeferredSizes, "루프 Build 전에 접는다");
+            AssertMatchesFreshBuild(layout, model, 0f, true, 300f, "loop build");
+        }
+
+        /// <summary>위치·길이와 위치 조회(셀 가운데)가 처음부터 Build한 레이아웃과 float 오차 안에서 같은지.</summary>
+        private static void AssertNearFreshBuild(CyScrollerLayout layout, List<float> model, float spacing, string context)
+        {
+            const float tolerance = 0.01f;
+            var fresh = new CyScrollerLayout();
+            fresh.SetDataCount(model.Count);
+            for (int i = 0; i < model.Count; i++)
+            {
+                fresh.SetSize(i, model[i]);
+            }
+
+            fresh.Build(spacing, EDIT_PADDING_BEFORE, EDIT_PADDING_AFTER, false, 300f, 10f, 20f);
+            Assert.AreEqual(fresh.CycleExtent, layout.CycleExtent, tolerance, $"{context} cycle");
+            Assert.AreEqual(fresh.ContentExtent, layout.ContentExtent, tolerance, $"{context} content");
+            for (int i = 0; i < model.Count; i++)
+            {
+                Assert.AreEqual(fresh.GetSlotStart(i), layout.GetSlotStart(i), tolerance, $"{context} start {i}");
+                Assert.AreEqual(fresh.GetSlotEnd(i), layout.GetSlotEnd(i), tolerance, $"{context} end {i}");
+                if (model[i] > 1f)
+                {
+                    float middle = fresh.GetSlotStart(i) + model[i] * 0.5f;
+                    Assert.AreEqual(i, layout.GetSlotAtPosition(middle), $"{context} at {i}");
+                    layout.GetSlotRange(middle, middle + 0.25f, out int first, out int last);
+                    Assert.AreEqual(i, first, $"{context} range first {i}");
+                    Assert.AreEqual(i, last, $"{context} range last {i}");
+                }
+            }
+        }
+
         /// <summary>같은 크기로 처음부터 Build한 레이아웃과 접두합·길이·루프 세트가 비트 단위로 같은지.</summary>
         private static void AssertMatchesFreshBuild(CyScrollerLayout layout, List<float> model, float spacing, bool loop, float viewport, string context)
         {
