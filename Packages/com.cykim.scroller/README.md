@@ -4,7 +4,7 @@ uGUI `ScrollRect` 위에서 동작하는 가상화 스크롤러. 보이는 구�
 나머지는 빈 스크롤 길이로 둔다.
 
 - 세로·가로, 셀마다 다른 크기, 간격·패딩, 미리 만들기(lookAhead)
-- `CellIdentifier` 단위 셀 뷰 풀링 (재부모화 없이 비활성으로 보관)
+- `CellIdentifier` 단위 셀 뷰 풀링 (재부모화 없이 비활성으로 보관), 풀 미리 채우기(`Prewarm`·`PrewarmAsync`)와 식별자별 회수 상한
 - 데이터 인덱스 점프 + 31종 트윈 + 커스텀 곡선, 점프 정렬은 뷰포트 크기가 바뀌어도 유지
 - 셀이 보이게만 옮기는 `ScrollIntoView` (Nearest·여백), 트윈 중 재배치·뷰포트 크기 변화가 일어나도 끊기거나 튀지 않고 새 목표로 이어 가는 트윈
 - 무한 루프 (짧은 목록도 뷰포트를 채우도록 세트 수 자동 결정, 재바인딩 없는 순환 보정, 드래그 중 기준점 재설정)
@@ -106,6 +106,7 @@ public class ItemCellView : CyScrollerCellView
 | 좌표 | `GetCellStart`, `GetCellSize`, `GetScrollPositionForDataIndex`, `GetScrollPositionForCellViewIndex`, `GetCellViewIndexAtPosition`, `GetDataIndexForCellViewIndex` |
 | 루프 | `Loop`, `LoopWhileDragging`, `ToggleLoop()`, `IgnoreLoopJump(bool)` |
 | 정리 | `ClearActive()`, `ClearRecycled()`, `ClearAll()`, `GetRecycledCellCount()` |
+| 풀 | `Prewarm(prefab, count)`, `PrewarmAsync(prefab, count)`, `SetMaxRecycled(cellIdentifier, max)`, `GetMaxRecycled(cellIdentifier)`, `DefaultMaxRecycled` |
 | 이벤트 | `CellViewVisibilityChanged`, `CellViewWillDisplay`, `CellViewDidEndDisplay`, `CellViewPositionChanged`, `CellViewInstantiated`, `CellViewReused`, `CellViewWillRecycle`, `ScrollerScrolled`, `ScrollerSnapped`, `ScrollerScrollingChanged`, `ScrollerTweeningChanged` |
 | 위치 훅 | `NotifyCellPositions`, `CellPositionPivot` |
 | 셀 뷰 | `DataIndex`, `CellIndex`, `ItemId`, `HasItemId`, `Active`, `IsBound`, `IsDisplayed`, `BindVersion`, `RefreshCellView()`, `RefreshCellView(changeMask)`, `OnRecycled()`, `OnBecameVisible()`, `OnBecameHidden()`, `OnViewportPositionChanged(normalizedOffset)`, `OnDataIndexChanged(previousDataIndex)` |
@@ -116,6 +117,29 @@ public class ItemCellView : CyScrollerCellView
 앞쪽에 걸리면 셀 시작을 뷰포트 시작에(Start), 뒤쪽이면 셀 끝을 뷰포트 끝에(End) 맞춘다. 셀이 여백까지 합쳐 뷰포트보다 크면 Start.
 `margin`은 셀 앞뒤로 남길 거리다 (Center는 쓰지 않음). 콘텐츠 끝 너머로는 남길 수 없으므로 첫·마지막 셀은 콘텐츠 끝까지 보이면 된다.
 선택 항목을 따라가는 목록이면 `ScrollIntoView(selected, margin: 8f)`.
+
+### 풀 미리 채우기와 상한
+
+첫 스크롤에 셀을 만드는 비용(Instantiate)은 화면을 열 때나 로딩 중으로 옮길 수 있다. 셀 종류(`CellIdentifier`)마다 회수 풀에 남길 수에 상한을 둘 수도 있다.
+
+```csharp
+private IEnumerator Start()
+{
+    // 화면을 채울 만큼(뷰포트 + 미리보기 구간) 미리 만든다. 비동기는 끝날 때까지 기다릴 수 있다.
+    yield return _scroller.PrewarmAsync(_messagePrefab, 12);
+    _scroller.Prewarm(_imageMessagePrefab, 4);   // 바로 만들기
+
+    // 드물게 쓰는 큰 셀은 2개까지만 남긴다. 넘치면 가장 오래 회수된 셀부터 파괴한다.
+    _scroller.SetMaxRecycled(_bannerPrefab.CellIdentifier, 2);
+    _scroller.Delegate = this;
+}
+```
+
+- `Prewarm`·`PrewarmAsync`는 그 식별자 풀의 회수 셀(과 진행 중인 비동기 요청)을 세어 count가 될 때까지만 만든다(상한이 있으면 상한까지). 만든 셀은 content 아래에서 끄고 `CellViewInstantiated`를 부른다.
+  프리팹이 켜져 있으면 셀의 Awake·OnEnable은 끄기 전에 한 번 불린다. `PrewarmAsync`는 할 일이 없으면 null을 돌려주고, 끝나기 전에 스크롤러가 파괴되면 만든 셀을 모두 파괴한다.
+  진행 중인 비동기 요청은 그사이 `ClearRecycled`를 불러도 끝나면 풀에 넣는다.
+- 상한은 식별자별 `SetMaxRecycled`(0 = 제한 없음, 음수 = 기본값 따름)가 없으면 `DefaultMaxRecycled`(인스펙터 **Pool**, 기본 0 = 제한 없음)를 쓴다. 바꾸면 넘친 만큼 바로 줄인다.
+  활성 셀 수는 제한하지 않으므로, 상한을 화면에 필요한 수보다 작게 두면 스크롤할 때마다 파괴와 생성이 반복된다.
 
 ### 셀 훅
 

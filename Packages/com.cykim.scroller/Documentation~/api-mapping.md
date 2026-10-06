@@ -11,6 +11,7 @@
 | 항목 크기 | `GetCellViewSize` (스크롤 축 길이) | `tableView(_:heightForRowAt:)` | 레이아웃 측정 | `fixedItemHeight` / `virtualizationMethod` |
 | 셀 만들기·바인딩 | `GetCellView` 안에서 `scroller.GetCellView(prefab)` 후 데이터 채우기 | `tableView(_:cellForRowAt:)` + `dequeueReusableCell(withIdentifier:for:)` | `onCreateViewHolder` / `onBindViewHolder` | `makeItem` / `bindItem` |
 | 재사용 풀 키 | `CyScrollerCellView.CellIdentifier` | `reuseIdentifier` | `getItemViewType()` | 템플릿 하나 |
+| 풀 미리 채우기·상한 | `Prewarm(prefab, count)` / `PrewarmAsync(prefab, count)`, `SetMaxRecycled(cellIdentifier, max)` / `DefaultMaxRecycled` | — (`register(_:forCellReuseIdentifier:)`는 등록만 하고 미리 만들지 않는다) | `RecycledViewPool.putRecycledView()`로 미리 넣기, `RecycledViewPool.setMaxRecycledViews(viewType, max)` | — |
 | 재활용 직전 훅 | `OnRecycled()`, `CellViewWillRecycle` | `prepareForReuse()` | `onViewRecycled()` | `unbindItem` |
 | 셀이 보이는 데이터 인덱스 | `DataIndex` (루프 슬롯은 `CellIndex`) | `indexPath` | `getBindingAdapterPosition()` | `bindItem`의 index |
 | 바뀐 부분만 다시 그리기 | `RefreshCellView(changeMask)` 재정의 (changeMask는 사용자 정의 비트 플래그) | — (`reconfigureRows(at:)`가 `tableView(_:cellForRowAt:)`에서 기존 셀을 다시 구성) | `onBindViewHolder(holder, position, payloads)` | `bindItem` |

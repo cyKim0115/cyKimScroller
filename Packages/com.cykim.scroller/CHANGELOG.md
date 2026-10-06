@@ -2,6 +2,14 @@
 
 이 패키지의 변경 내역. 형식은 [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/), 버전은 [SemVer](https://semver.org/lang/ko/)를 따른다.
 
+## [Unreleased]
+
+### Added
+- 풀 미리 채우기 `Prewarm(prefab, count)`와 `PrewarmAsync(prefab, count)`(`Object.InstantiateAsync`): 그 식별자 풀의 회수 셀이 count가 될 때까지 만들어 끈 채 넣고 `CellViewInstantiated`를 부른다.
+  비동기는 진행 중인 요청까지 세어 더 만들지 않고, 할 일이 없으면 null을 돌려주며, 끝나기 전에 스크롤러가 파괴되면 만든 셀을 모두 파괴한다
+- 식별자별 회수 상한 `SetMaxRecycled(cellIdentifier, max)`·`GetMaxRecycled(cellIdentifier)`와 기본 상한 `DefaultMaxRecycled`(인스펙터 Pool, 기본 0 = 제한 없음): 넘치면 가장 오래 회수된 셀부터 파괴한다.
+  상한은 풀 객체에 두어 회수할 때 사전을 다시 찾지 않는다
+
 ## [0.2.1] - 2026-10-06
 
 ### Changed
