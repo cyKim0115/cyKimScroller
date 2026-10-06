@@ -71,11 +71,13 @@
 ## v0.2 추천 묶음
 위 표의 1~9위를 다섯 덩어리로 묶었습니다. 구현 순서는 ① → ② → ⑤ → ③ → ④입니다.
 
+> **v0.2.0 (2026-10-06) 반영:** ①~⑤ 다섯 묶음을 모두 v0.2.0 하나로 냈습니다(묶음마다 피처 브랜치). 키 유지 리로드는 옵트인(`PreserveCellsById`, 기본 꺼짐)으로 정했습니다. 10위(크기 변경)는 다음 버전 후보로 남깁니다. 실제 API와 동작은 패키지 README·CHANGELOG가 기준입니다.
+
 **사용자 선택 필요:**
 - 다섯 개를 v0.2 하나로 낼지, v0.2(①②⑤)와 v0.2.x(③④)로 나눌지
 - ⑤ 대신 10위(아코디언 크기 변경)를 넣을지
 
-### ① 안전 기반: 드래그 안전 이동 + 회귀 가드 (1·2위, S+S)
+### ① 안전 기반: 드래그 안전 이동 + 회귀 가드 (1·2위, S+S) — v0.2.0 완료
 `RecenterLoopIfNeeded`와 `RelayoutKeepingPosition`을 이 경로 하나로 합칩니다.
 ```csharp
 // CyScroller.Anchoring.cs (partial)
@@ -95,7 +97,7 @@ internal void ShiftScrollPosition(float delta);
 private static readonly ProfilerMarker s_UpdateActiveRangeMarker = new("CyScroller.UpdateActiveRange");
 ```
 
-### ② 스크롤 대상과 트윈 목표 실시간 재계산 (3위, S)
+### ② 스크롤 대상과 트윈 목표 실시간 재계산 (3위, S) — v0.2.0 완료
 트윈은 절대 좌표 대신 "요청"을 저장하고, `UpdateTween`마다 O(1)로 목표를 다시 계산합니다. 재배치가 일어나도 트윈을 취소하지 않으므로 `onComplete`가 유지됩니다.
 ```csharp
 public enum ScrollAlign { Start = 0, Center = 1, End = 2, Nearest = 3 }
@@ -112,7 +114,7 @@ private JumpRequest _tweenRequest;
 private bool _hasTweenRequest;   // 루프 재중심 때 Slot도 함께 이동
 ```
 
-### ③ 안정 ID와 위치 보존 리로드 (6·7위, S+S)
+### ③ 안정 ID와 위치 보존 리로드 (6·7위, S+S) — v0.2.0 완료
 - 데이터가 0개이거나 뷰포트 크기가 0일 때 들어온 복원·점프 요청은 `_pendingAnchor`에 보관합니다. 다음 `ReloadData`(N > 0)나 `CheckViewportResize`에서 적용합니다. 리로드 직후 점프하면 빈 화면이 나오는 문제가 이것으로 해결됩니다.
 - `ReloadDataKeepingPosition()`은 `ReloadData(ReloadAnchor.FirstVisible)`의 별칭으로 남깁니다.
 - 구현 반영(③): 보관하는 것은 복원 요청(`RestoreAnchor`·`ReloadData(in anchor)`)뿐이고, 점프·`ScrollIntoView`·`Snap`은 갈 셀이 없어도 보관한 앵커를 버립니다(빈 목록 점프는 지금처럼 바로 완료).
@@ -144,7 +146,7 @@ public long ItemId { get; internal set; }
 public bool HasItemId { get; internal set; }
 ```
 
-### ④ 증분 구조 변경과 부분 갱신 (8·9위, S+M)
+### ④ 증분 구조 변경과 부분 갱신 (8·9위, S+M) — v0.2.0 완료
 - **계약:** 각 연산은 호출한 순서대로 적용됩니다. 호출하는 시점의 `GetNumberOfCells`는 이미 변경을 반영하고 있어야 합니다.
 - **개수 불일치:** `EndUpdates`에서 개수가 안 맞으면 `[CyScroller]` LogWarning을 남기고 `ReloadData(ReloadAnchor.FirstVisible)`로 대체합니다.
 - **위치 보존:** 뷰포트 위쪽에 삽입하면 앵커 인덱스를 재계산하고 `ShiftScrollPosition`으로 보정하므로 화면이 움직이지 않습니다.
@@ -168,7 +170,7 @@ public virtual void RefreshCellView(int changeMask) => RefreshCellView();
 protected internal virtual void OnDataIndexChanged(int previousDataIndex) { }
 ```
 
-### ⑤ 셀 훅: 바인딩 버전, 표시 이벤트, 뷰포트 위치 (4·5위, S+S)
+### ⑤ 셀 훅: 바인딩 버전, 표시 이벤트, 뷰포트 위치 (4·5위, S+S) — v0.2.0 완료
 - 기존 `CellViewVisibilityChanged`는 lookAhead 구간을 포함한 활성화 기준을 그대로 유지합니다(v0.1 동작 호환).
 - 위치 훅은 플래그가 꺼져 있으면 루프 자체를 건너뜁니다. 계산은 레이아웃 캐시에서 하고, `LateUpdate` 끝에서 한 번만 실행합니다.
 - **사용자 선택 필요:** 캐러셀·휠 피커 샘플의 연출 스타일.
