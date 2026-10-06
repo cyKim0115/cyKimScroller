@@ -5,12 +5,17 @@ namespace CyKim.Scroller.Samples.Basic
 {
     /// <summary>
     /// 빈 씬의 GameObject에 붙이고 Play하면 샘플 UI 전체를 만든다.
-    /// 왼쪽: 높이가 다른 500개 세로 목록 / 가운데: 점프 버튼과 목록 상태 / 오른쪽: 휠 피커 / 아래: 순환·스냅 캐러셀.
+    /// 왼쪽: 높이가 다른 500개 세로 목록 / 가운데: 점프·편집(증분 변경) 버튼과 목록 상태 / 오른쪽: 휠 피커 / 아래: 순환·스냅 캐러셀.
     /// 1920×1080 기준 Canvas에 비율 앵커로 배치하므로 16:9 해상도(1280×720 등)에서는 같은 배치로 보인다.
     /// </summary>
     public class BasicSample : MonoBehaviour
     {
         private const float CAROUSEL_CARD_WIDTH = 260f;
+
+        // 가운데 버튼 열: 버튼 10개와 4줄 상태가 1920×1080 기준 본문 높이(약 577) 안에 들어가게 한다.
+        private const float BUTTON_HEIGHT = 40f;
+        private const float BUTTON_SPACING = 6f;
+        private const float STATUS_MIN_HEIGHT = 96f;
 
         [SerializeField, Min(0)] private int _listItemCount = 500;
         [SerializeField, Min(1)] private int _carouselCardCount = 12;
@@ -113,29 +118,55 @@ namespace CyKim.Scroller.Samples.Basic
         private void BuildControls(RectTransform root)
         {
             RectTransform body = SampleUiFactory.CreateSection("Controls Section", root,
-                new Vector2(0.425f, 0.33f), new Vector2(0.625f, 0.905f), "JUMP  ·  tweened");
+                new Vector2(0.425f, 0.33f), new Vector2(0.625f, 0.905f), "JUMP  ·  EDIT keeps the view");
 
             var layout = body.gameObject.AddComponent<VerticalLayoutGroup>();
-            layout.spacing = 10f;
+            layout.spacing = BUTTON_SPACING;
             layout.childControlHeight = true;
             layout.childControlWidth = true;
             layout.childForceExpandHeight = false;
             layout.childForceExpandWidth = true;
 
+            // 점프: 트윈으로 이동한다. #250은 항목 번호(ID)라 앞에 항목이 들어와도 같은 항목으로 간다.
             AddButton(body, "List: Top", () => _list.JumpTo(0));
-            AddButton(body, "List: Item #250 (center)", () => _list.JumpTo(250));
+            AddButton(body, "List: Item #250 (center)", () => _list.JumpToItem(250));
             AddButton(body, "List: Bottom", () => _list.JumpTo(_list.ItemCount - 1));
             AddButton(body, "List: Random", () => _list.JumpTo(Random.Range(0, _list.ItemCount)));
+
+            // 편집: 증분 변경(InsertCells·RemoveCells·MoveCell)으로 알려 남은 셀을 다시 바인딩하지 않고 보던 화면을 지킨다.
+            AddButton(body, "List: Insert 3 at top", () => EditList(0));
+            AddButton(body, "List: Remove first visible", () => EditList(1));
+            AddButton(body, "List: Move visible to top", () => EditList(2));
+
             AddButton(body, "Carousel: Previous", () => _carousel.Previous());
             AddButton(body, "Carousel: Next", () => _carousel.Next());
             AddButton(body, "Wheel: Spin to random", () => _wheel.SpinToRandom());
 
-            _listStatus = SampleUiFactory.CreateText("List Status", body, string.Empty, 22, TextAnchor.LowerLeft);
+            _listStatus = SampleUiFactory.CreateText("List Status", body, string.Empty, 20, TextAnchor.LowerLeft);
             _listStatus.color = SampleUiFactory.MutedTextColor;
             _listStatus.raycastTarget = false;
             var statusLayout = _listStatus.gameObject.AddComponent<LayoutElement>();
-            statusLayout.minHeight = 96f;
+            statusLayout.minHeight = STATUS_MIN_HEIGHT;
             statusLayout.flexibleHeight = 1f;
+        }
+
+        private void EditList(int edit)
+        {
+            switch (edit)
+            {
+                case 0:
+                    _list.InsertAtTop(3);
+                    break;
+                case 1:
+                    _list.RemoveFirstVisible();
+                    break;
+                default:
+                    _list.MoveVisibleToTop();
+                    break;
+            }
+
+            // 화면 밖 삽입처럼 셀 이벤트가 없는 편집도 상태 줄(개수·인덱스·마지막 편집)을 다시 그린다.
+            _listStatusDirty = true;
         }
 
         private void BuildWheel(RectTransform root)
@@ -195,7 +226,7 @@ namespace CyKim.Scroller.Samples.Basic
         private static void AddButton(RectTransform panel, string label, UnityEngine.Events.UnityAction onClick)
         {
             Button button = SampleUiFactory.CreateButton(label, panel, onClick);
-            button.gameObject.AddComponent<LayoutElement>().preferredHeight = 52f;
+            button.gameObject.AddComponent<LayoutElement>().preferredHeight = BUTTON_HEIGHT;
         }
 
         private void OnListDisplayChanged(CyScroller scroller, CyScrollerCellView cellView)
@@ -233,10 +264,12 @@ namespace CyKim.Scroller.Samples.Basic
                 lastDisplayed = view.DataIndex;
             }
 
+            // 인덱스는 데이터 인덱스다 (셀 라벨의 번호는 항목 ID). 위에 삽입하면 같은 항목이 보이는 채로 인덱스만 밀린다.
             _listStatus.text =
-                $"List  displayed #{firstDisplayed} ~ #{lastDisplayed}  ({displayed} cells)\n" +
-                $"active views {scroller.ActiveCellViews.Count}  ·  pooled {scroller.GetRecycledCellCount()}\n" +
-                "lookahead: 120px below the viewport";
+                $"List  displayed index {firstDisplayed} ~ {lastDisplayed}  ({displayed} cells)\n" +
+                $"{_list.ItemCount} items  ·  active views {scroller.ActiveCellViews.Count}  ·  pooled {scroller.GetRecycledCellCount()}\n" +
+                "lookahead: 120px below the viewport\n" +
+                _list.LastEdit;
         }
 
         private void OnCardCentered(int card)
