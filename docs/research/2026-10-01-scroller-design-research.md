@@ -100,7 +100,7 @@ uGUI용 가상화 스크롤러를 새로 만들기 전에, 여러 플랫폼의 �
 | 결정 | 이유 |
 |---|---|
 | 타입 이름은 `CyScroller` / `ICyScrollerDelegate` / `CyScrollerCellView` | 다른 라이브러리와 이름 충돌 회피. `CyKim.Scroller` 네임스페이스 안에 `Scroller` 클래스를 두면 이름 모호성 발생, `UnityEngine.UIElements.Scroller`와도 겹침 |
-| 데이터 소스 메서드는 "개수·크기·셀" 3개 | 여러 플랫폼에서 익숙한 흐름이라 학습 비용이 낮다 (`GetNumberOfCells`, `ReloadData`, `JumpToDataIndex` …) |
+| 데이터 소스 메서드는 "개수·크기·셀" 3개 | 여러 플랫폼이 같은 흐름을 써서 학습 비용이 낮다 (UIKit `numberOfRows`·`heightForRow`·`cellForRow`, Android `getItemCount`·`onBindViewHolder`). 이름은 이 저장소에서 새로 정했다 |
 | 공개 멤버는 PascalCase 프로퍼티·이벤트 | 프로젝트 C# 컨벤션 |
 | padder+LayoutGroup 대신 **RectTransform 직접 배치** | 레이아웃 리빌드 비용 제거 |
 | 재활용 셀은 content 아래에 비활성으로 둔다 | SetParent 비용·이중 dirty 회피 |
