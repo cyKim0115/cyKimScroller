@@ -1096,6 +1096,159 @@ namespace CyKim.Scroller.Tests
             }
         }
 
+        /// <summary>키 유지로 다시 읽는 진입점.</summary>
+        public enum PreservingEntry
+        {
+            FirstVisible,
+            LastVisible,
+            KeepingPosition,
+        }
+
+        private static void ReloadPreserving(CyScroller scroller, PreservingEntry entry)
+        {
+            switch (entry)
+            {
+                case PreservingEntry.FirstVisible:
+                    scroller.ReloadData(ReloadAnchor.FirstVisible);
+                    break;
+                case PreservingEntry.LastVisible:
+                    scroller.ReloadData(ReloadAnchor.LastVisible);
+                    break;
+                default:
+                    scroller.ReloadDataKeepingPosition();
+                    break;
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator SizeExceptionDuringPreservingReloadRebuild_RecoversToScreenBeforeRebuild()
+        {
+            yield return RunPreservingRebuildException(PreservingEntry.FirstVisible);
+        }
+
+        [UnityTest]
+        public IEnumerator SizeExceptionDuringTrailingPreservingReloadRebuild_RecoversToScreenBeforeRebuild()
+        {
+            yield return RunPreservingRebuildException(PreservingEntry.LastVisible);
+        }
+
+        [UnityTest]
+        public IEnumerator SizeExceptionDuringPreservingRelayoutRebuild_RecoversToScreenBeforeRebuild()
+        {
+            yield return RunPreservingRebuildException(PreservingEntry.KeepingPosition);
+        }
+
+        /// <summary>
+        /// 키 유지 리로드(FirstVisible·LastVisible)·재배치(ReloadDataKeepingPosition)가 다시 읽는 도중 크기 질의가 던진다. 개수가 크기 버퍼 용량(100)을 넘게 늘어
+        /// 배치가 반쯤 읽힌 채 남는다(새 버퍼라 접두합은 0, 항목 ID 배열은 옛 길이). 예외는 호출자에게 올라가고, 다음 갱신의 복구 리로드는 그 배치에서 화면을 읽지 않고
+        /// 다시 읽기 전 화면(10번 위 50 = 뷰포트 끝 14번 끝 50 전)으로 가서 모두 다시 바인딩한다.
+        /// </summary>
+        private IEnumerator RunPreservingRebuildException(PreservingEntry entry)
+        {
+            _harness = CreateHarness(100);
+            CyScroller scroller = _harness.Scroller;
+            scroller.ScrollPosition = 1050f;   // 10~14번 표시
+            bool armed = false;
+            _harness.Data.GetCellViewSizeHook = (s, index) =>
+            {
+                if (armed && index == 50)
+                {
+                    armed = false;
+                    throw new System.InvalidOperationException("크기 질의 예외");
+                }
+            };
+
+            _harness.Data.Insert(0, NextItem(), 100f);
+            armed = true;
+            Assert.Throws<System.InvalidOperationException>(() => ReloadPreserving(scroller, entry));
+            Assert.IsFalse(armed);
+            Assert.AreEqual(1050f, scroller.ScrollPosition, EPSILON, $"{entry}: 다시 읽다 멈춰 위치는 그대로다");
+            List<CellRecord> before = Record(_harness);
+            int binds = _harness.Data.GetCellViewCalls;
+
+            yield return null;
+
+            Assert.AreEqual(101, scroller.NumberOfCells, entry.ToString());
+            Assert.AreEqual(1150f, scroller.ScrollPosition, EPSILON, $"{entry}: 다시 읽기 전 화면의 항목(10번 → 11번)과 오프셋");
+            AssertConsistent(_harness, entry.ToString());
+            AssertAllRebound(_harness, before, binds, entry.ToString());
+        }
+
+        /// <summary>다시 읽는 중 델리게이트가 닫는 배치에 담는 것.</summary>
+        public enum BatchWork
+        {
+            ClearRecycled,
+            ReloadRequest,
+            DeferredRangeUpdate,
+        }
+
+        /// <summary>
+        /// 키 유지 리로드·재배치가 다시 읽는 도중(새 50번 크기를 물을 때) 델리게이트가 배치를 열고 닫는다. 배치에는 미룬 정리(<see cref="CyScroller.ClearRecycled"/>),
+        /// 리로드 요청, 미룬 범위 갱신(<see cref="CyScroller.ScrollPosition"/> 대입) 중 하나가 있다. 개수가 크기 버퍼 용량을 넘게 늘어 배치는 아직 반쯤 읽힌 채다.
+        /// 배치 끝은 그 배치로 범위를 맞추지 않고, 미룬 작업은 셀을 새 인덱스로 맞춘 뒤 처리한다(리로드 요청은 키 유지로 한 번 더 다시 읽는다).
+        /// 위치는 다시 읽기 전 화면을 지키고 활성 셀은 다시 바인딩하지 않고 남는다.
+        /// </summary>
+        [Test]
+        public void BatchClosedByDelegateDuringPreservingRebuild_WaitsForReconcile(
+            [Values(PreservingEntry.FirstVisible, PreservingEntry.KeepingPosition)] PreservingEntry entry, [Values] BatchWork work)
+        {
+            _harness = CreateHarness(100);
+            CyScroller scroller = _harness.Scroller;
+            scroller.ScrollPosition = 1050f;
+            scroller.ScrollPosition = 1000f;   // 10~13번 표시, 14번을 보이던 셀은 풀에 있다
+            Assert.Greater(scroller.GetRecycledCellCount(), 0, "풀에 셀이 있다");
+
+            bool armed = false;
+            int countQueries = 0;
+            _harness.Data.GetNumberOfCellsHook = _ => countQueries++;
+            _harness.Data.GetCellViewSizeHook = (s, index) =>
+            {
+                if (!armed || index != 50)
+                {
+                    return;
+                }
+
+                armed = false;
+                s.BeginUpdates();
+                switch (work)
+                {
+                    case BatchWork.ClearRecycled:
+                        s.ClearRecycled();
+                        break;
+                    case BatchWork.ReloadRequest:
+                        s.ReloadData(ReloadAnchor.FirstVisible);
+                        break;
+                    default:
+                        s.ScrollPosition = 0f;
+                        break;
+                }
+
+                s.EndUpdates();
+            };
+
+            List<CellRecord> before = Record(_harness);
+            int binds = _harness.Data.GetCellViewCalls;
+            _harness.Data.Insert(0, NextItem(), 100f);
+            armed = true;
+            ReloadPreserving(scroller, entry);
+
+            string context = $"{entry} {work}";
+            Assert.IsFalse(armed, $"{context}: 다시 읽는 중에 배치를 닫았다");
+            Assert.AreEqual(1100f, scroller.ScrollPosition, EPSILON, $"{context}: 같은 항목(10번 → 11번)");
+            AssertConsistent(_harness, context);
+            AssertCellsPreserved(_harness, before, binds, context);
+            switch (work)
+            {
+                case BatchWork.ClearRecycled:
+                    Assert.AreEqual(0, scroller.GetRecycledCellCount(), $"{context}: 미룬 정리를 처리했다");
+                    break;
+                case BatchWork.ReloadRequest:
+                    // 다시 읽기 한 번 + 배치 끝을 기다린 리로드 요청 한 번 (배치 끝은 다시 읽을 요청이 있어 개수를 맞춰 보지 않는다).
+                    Assert.AreEqual(2, countQueries, $"{context}: 리로드 요청을 셀을 맞춘 뒤 처리했다");
+                    break;
+            }
+        }
+
         [Test]
         public void EndUpdatesCountMismatch_ReplacedByAnchorReload_RebindsEverything()
         {
