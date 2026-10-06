@@ -38,6 +38,7 @@ namespace CyKim.Scroller.Tests
         public System.Action<TestCellView, int> RefreshHook;
 
         public int RecycledCount;
+        public int SettledCount;
         public int BecameVisibleCount;
         public int BecameHiddenCount;
         public int PositionCallCount;
@@ -85,6 +86,11 @@ namespace CyKim.Scroller.Tests
         protected internal override void OnBecameHidden()
         {
             BecameHiddenCount++;
+        }
+
+        protected internal override void OnScrollerSettled()
+        {
+            SettledCount++;
         }
 
         protected internal override void OnDataIndexChanged(int previousDataIndex)
