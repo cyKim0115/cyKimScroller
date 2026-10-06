@@ -15,6 +15,10 @@
 * [셀 훅](docs/gitbook/guides/cell-hooks.md)
 * [항목 ID와 위치 앵커](docs/gitbook/guides/item-id-and-anchor.md)
 * [증분 변경과 부분 갱신](docs/gitbook/guides/incremental-updates.md)
+* [셀 크기 변경](docs/gitbook/guides/cell-resize.md)
+* [정착과 고속 스크롤](docs/gitbook/guides/settled-and-fast-scrolling.md)
+* [끝 근접과 페이지 불러오기](docs/gitbook/guides/near-edge-paging.md)
+* [풀 미리 채우기와 회수 상한](docs/gitbook/guides/pool-prewarm.md)
 * [성능](docs/gitbook/guides/performance.md)
 
 ## 레퍼런스 <a href="#reference" id="reference"></a>

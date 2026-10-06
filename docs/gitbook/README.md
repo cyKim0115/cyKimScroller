@@ -72,6 +72,30 @@ CyKim Scroller는 Unity uGUI `ScrollRect` 위에서 동작하는 가상화 스�
       <td><a href="../../.gitbook/assets/cover-incremental.png">cover-incremental.png</a></td>
     </tr>
     <tr>
+      <td><strong>셀 크기 변경</strong></td>
+      <td>펼치기·접기처럼 크기만 바뀐 셀을 다시 바인딩하지 않고 애니메이션으로 바꾼다.</td>
+      <td><a href="guides/cell-resize.md">cell-resize.md</a></td>
+      <td><a href="../../.gitbook/assets/cover-cell-resize.png">cover-cell-resize.png</a></td>
+    </tr>
+    <tr>
+      <td><strong>정착과 고속 스크롤</strong></td>
+      <td>빠르게 지나가는 셀의 무거운 로드를 미뤘다가 스크롤이 멈춘 뒤 시작한다.</td>
+      <td><a href="guides/settled-and-fast-scrolling.md">settled-and-fast-scrolling.md</a></td>
+      <td><a href="../../.gitbook/assets/cover-settled.png">cover-settled.png</a></td>
+    </tr>
+    <tr>
+      <td><strong>끝 근접과 페이지 불러오기</strong></td>
+      <td>콘텐츠 끝에 가까워지면 알림을 받아 다음 페이지를 붙인다.</td>
+      <td><a href="guides/near-edge-paging.md">near-edge-paging.md</a></td>
+      <td><a href="../../.gitbook/assets/cover-near-edge.png">cover-near-edge.png</a></td>
+    </tr>
+    <tr>
+      <td><strong>풀 미리 채우기와 회수 상한</strong></td>
+      <td>첫 스크롤의 셀 생성 비용을 미리 치르고, 셀 종류마다 풀에 남길 수를 제한한다.</td>
+      <td><a href="guides/pool-prewarm.md">pool-prewarm.md</a></td>
+      <td><a href="../../.gitbook/assets/cover-pool.png">cover-pool.png</a></td>
+    </tr>
+    <tr>
       <td><strong>성능</strong></td>
       <td>스크롤 중 GC 할당 0, Profiler 마커, 10만 셀 스트레스 씬.</td>
       <td><a href="guides/performance.md">performance.md</a></td>
@@ -88,6 +112,10 @@ CyKim Scroller는 Unity uGUI `ScrollRect` 위에서 동작하는 가상화 스�
 * **증분 변경** — `InsertCells`·`RemoveCells`·`MoveCell`·`RefreshCells`·`ReloadCellView`를 배치로 묶어 보던 화면을 지키며 반영
 * **안정 항목 ID** — 앞쪽 삽입·삭제에도 보던 항목을 지키는 리로드, 항목 기준 위치 저장·복원, 같은 ID 셀을 다시 바인딩하지 않는 리로드(옵트인)
 * **셀 훅** — 실제 뷰포트 기준 표시 이벤트, 늦은 비동기 결과를 버리는 `BindVersion`, 캐러셀·휠 피커 연출용 뷰포트 위치 훅
+* **셀 크기 변경** — 다시 바인딩하지 않는 크기 변경과 애니메이션, 셀 가장자리를 화면에 고정하는 기준 (다음 버전)
+* **정착·고속 스크롤** — 움직임이 모두 끝났을 때 한 번 오는 정착 이벤트와 히스테리시스를 둔 고속 스크롤 플래그 (다음 버전)
+* **끝 근접** — 처음·끝에 가까워지면 가장자리마다 한 번 알려 페이지를 이어 불러오기 (다음 버전)
+* **풀 미리 채우기** — 동기·비동기 프리웜과 셀 종류별 회수 상한 (다음 버전)
 * **GC 0** — 스크롤 핫패스 할당 0을 PlayMode 테스트로 지킨다
 
 ## 설치

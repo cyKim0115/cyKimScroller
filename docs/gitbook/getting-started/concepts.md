@@ -15,7 +15,7 @@ icon: book-open
 | `GetCellViewSize` | 항목의 스크롤 축 크기 (세로면 높이, 가로면 너비) | 리로드할 때 모든 항목, 삽입·`ReloadCellView` 때 그 항목만 |
 | `GetCellView` | 그 항목을 그릴 셀 뷰 | 항목이 활성 범위에 들어올 때 |
 
-크기는 델리게이트가 정한다. 셀이 스스로 크기를 바꾸지 않고, 크기가 바뀌면 다시 묻게 한다 (`ReloadDataKeepingPosition()`, 한 항목이면 `ReloadCellView(dataIndex)`).
+크기는 델리게이트가 정한다. 셀이 스스로 크기를 바꾸지 않고, 크기가 바뀌면 다시 묻게 한다 (`ReloadDataKeepingPosition()`, 한 항목이면 `ReloadCellView(dataIndex)`, 크기만 바뀐 한 항목이면 [`ResizeCellView`](../guides/cell-resize.md)).
 
 ## 셀 식별자와 풀
 
@@ -28,6 +28,7 @@ icon: book-open
 
 {% hint style="info" %}
 `CellViewInstantiated`(새로 만듦)·`CellViewReused`(풀에서 꺼냄)·`CellViewWillRecycle`(풀로 돌아감) 이벤트로 풀 동작을 볼 수 있다.
+첫 스크롤의 생성 비용을 미리 치르거나 풀에 남길 수를 제한하려면 [풀 미리 채우기와 회수 상한](../guides/pool-prewarm.md)을 본다.
 {% endhint %}
 
 ## 데이터 인덱스와 슬롯
