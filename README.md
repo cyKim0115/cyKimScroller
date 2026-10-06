@@ -121,4 +121,4 @@ tools/                         샘플 임시 텍스처 생성 스크립트
 
 ## 라이선스
 
-[LICENSE.md](Packages/com.cykim.scroller/LICENSE.md) — All rights reserved.
+MIT — [LICENSE.md](Packages/com.cykim.scroller/LICENSE.md)

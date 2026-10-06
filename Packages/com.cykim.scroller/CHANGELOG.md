@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 ### Changed
+- 라이선스를 MIT로 바꾼다 (`LICENSE.md`, `package.json`의 `license`). 저장소 루트에도 같은 `LICENSE`를 둔다
 - 샘플 `Basic`은 어두운 단색 테마 대신 세이지·차콜 라이트 테마로 그린다. 스크롤러 패널·셀·카드·버튼·휠 하이라이트는 `Resources/CyKimScrollerBasic`의
   임시 흰색 9-slice 스프라이트(`Panel`·`Card`·`Button`·`Pill`)에 색을 곱해 그리고, 스프라이트가 없으면 단색으로 그린다(경고 한 번).
   목록 셀·캐러셀 카드는 무지개 색 대신 밝은 세이지 톤을 돌아가며 쓰고(항목을 만들 때 미리 정해 바인딩 할당 없음), 편집 버튼 3개는 강조색 주 버튼으로 구분한다.

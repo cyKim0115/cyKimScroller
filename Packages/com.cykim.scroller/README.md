@@ -463,4 +463,4 @@ UITableView·RecyclerView·UI Toolkit ListView와의 개념 대응표는 [`Docum
 
 ## 라이선스
 
-[LICENSE.md](LICENSE.md)
+MIT — [LICENSE.md](LICENSE.md)
