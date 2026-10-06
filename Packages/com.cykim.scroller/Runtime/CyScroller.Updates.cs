@@ -59,8 +59,8 @@ namespace CyKim.Scroller
         private readonly List<int> _reconcilePrevious = new List<int>(32);
         private readonly List<int> _reconcileMasks = new List<int>(32);
 
-        // 증분 변경을 적용하는 동안(활성 셀이 아직 배치 전 인덱스일 수 있는 동안) 콜백이 부른 RefreshCells (콜백 안에서 끝난 갱신만 있는 배치 포함).
-        // 셀을 새 인덱스로 맞춘 뒤 남은 셀에 배치의 마스크와 OR로 합쳐 부른다 (용량을 재사용한다).
+        // 증분 변경을 적용하거나 키 유지 리로드·재배치로 다시 읽는 동안(활성 셀이 아직 옛 인덱스일 수 있는 동안) 사용자 코드가 부른 RefreshCells
+        // (그 안에서 끝난 갱신만 있는 배치 포함). 셀을 새 인덱스로 맞춘 뒤 남은 셀에 배치의 마스크와 OR로 합쳐 부른다 (용량을 재사용한다).
         private bool _deferRefreshes;
         private readonly List<UpdateOp> _deferredRefreshes = new List<UpdateOp>(4);
 
@@ -127,7 +127,9 @@ namespace CyKim.Scroller
         /// 루프 모드도 증분 대신 같은 리로드로 바꾸고, 델리게이트·셀 이벤트 콜백 안에서 끝난 배치는 같은 리로드를 범위 갱신이 끝난 뒤로 미룬다.
         /// 갱신(<see cref="RefreshCells"/>)만 있는 배치는 레이아웃을 바꾸지 않으므로 어느 쪽이든 리로드하지 않는다
         /// (루프 모드는 사본 셀마다 부르고, 콜백 안에서 끝났으면 개수를 맞춰 보지 않고 배치 밖 호출처럼 바로 부른다).
-        /// 배치 중 다시 읽는 요청(리로드·<see cref="ReloadDataKeepingPosition"/>·축 전환·델리게이트 교체)이 있었으면 기록한 연산 대신 그 요청을 처리한다 (위치 기준은 배치 전 화면).</para>
+        /// 이렇게 바꾼 리로드는 <see cref="PreserveCellsById"/>와 무관하게 모든 셀을 다시 바인딩한다.
+        /// 배치 중 다시 읽는 요청(리로드·<see cref="ReloadDataKeepingPosition"/>·축 전환·델리게이트 교체)이 있었으면 기록한 연산 대신 그 요청을 처리한다 (위치 기준은 배치 전 화면).
+        /// 기록한 연산에 내용 갱신·다시 받기가 있었으면 그 요청이 키 유지 리로드여도 모든 셀을 다시 바인딩한다 (구조 연산만 있으면 키 유지를 따른다).</para>
         /// <para><see cref="ReloadCellView"/>한 항목은 크기(와 ID)를 다시 묻고 활성 셀을 다시 바인딩한다. <see cref="RefreshCells"/>로 알린 항목은 남은 셀마다 모은 changeMask로
         /// <see cref="CyScrollerCellView.RefreshCellView(int)"/>를 한 번 부른다(인덱스 변경 알림·재배치 뒤, 새 자리 바인딩·표시 시작 전). 새로 바인딩하는 셀에는 부르지 않는다.</para>
         /// </remarks>
@@ -295,14 +297,17 @@ namespace CyKim.Scroller
         /// <param name="changeMask">무엇이 바뀌었는지 알리는 사용자 정의 비트 플래그 (기본 ~0 = 모두). 셀 뷰에 그대로 전달하고, 0이면 아무것도 하지 않는다.</param>
         /// <remarks>
         /// <para>배치 밖에서는 바로 부른다. 레이아웃을 바꾸지 않으므로 루프 모드에서도 리로드하지 않고 같은 데이터의 사본 셀마다 부르며, 델리게이트·셀 이벤트 콜백 안에서도 바로 부른다
-        /// (증분 변경을 적용하는 중이면 활성 셀을 새 인덱스로 맞춘 뒤 부른다). 리로드·재배치가 기다리고 있으면 그쪽이 셀을 모두 다시 바인딩하므로 부르지 않는다.
-        /// 활성 범위 밖 항목은 나중에 활성화될 때 최신 데이터로 바인딩되므로 부르지 않는다.</para>
+        /// (증분 변경을 적용하거나 키 유지 리로드·재배치(<see cref="PreserveCellsById"/>)로 다시 읽는 중이면 활성 셀을 새 인덱스로 맞춘 뒤 부른다).
+        /// 리로드·재배치가 기다리고 있으면 그쪽이 셀을 모두 다시 바인딩하므로 부르지 않는다
+        /// (기다리는 리로드가 키 유지 리로드(<see cref="PreserveCellsById"/>)여도 이 갱신을 버리지 않게 모두 다시 바인딩한다).
+        /// 활성 범위 밖 항목은 나중에 활성화될 때 최신 데이터로 바인딩되므로 부르지 않는다.
+        /// 키 유지 리로드는 내용 변경을 감지하지 않으므로, 리로드로 데이터를 바꿨으면 리로드한 뒤 새 인덱스로 부른다.</para>
         /// <para>배치(<see cref="BeginUpdates"/>) 안에서는 항목마다 changeMask를 OR로 모았다가 <see cref="EndUpdates"/>에서 남은 셀마다 한 번 부른다.
         /// 뒤따른 삽입·삭제·이동이 인덱스를 옮기면 모은 값도 같은 항목을 따라간다(순차 의미론). 지워진 항목과 배치 끝에 새로 바인딩되는 셀
         /// (새로 활성 범위에 들어온 항목, 삽입한 항목, <see cref="ReloadCellView"/>한 항목)은 이미 최신 데이터로 바인딩되므로 부르지 않는다.
         /// 배치가 리로드로 바뀌면(개수 불일치, 루프 모드나 콜백 안에서 끝난 배치의 삽입·삭제·이동·다시 받기) 셀을 모두 다시 바인딩하므로 부르지 않는다.
-        /// 갱신만 있는 배치는 리로드로 바뀌지 않는다. 콜백 안에서 끝났으면 배치 밖 호출처럼 바로(증분 변경을 적용하는 중이면 활성 셀을 새 인덱스로 맞춘 뒤)
-        /// 셀마다 모은 changeMask로 한 번 부른다.</para>
+        /// 갱신만 있는 배치는 리로드로 바뀌지 않는다. 콜백 안에서 끝났으면 배치 밖 호출처럼 바로(증분 변경을 적용하거나 키 유지 리로드·재배치로 다시 읽는 중이면
+        /// 활성 셀을 새 인덱스로 맞춘 뒤) 셀마다 모은 changeMask로 한 번 부른다.</para>
         /// <para>크기나 셀 종류(프리팹)가 바뀌면 <see cref="ReloadCellView"/>를 쓴다.</para>
         /// </remarks>
         public void RefreshCells(int dataIndex, int count, int changeMask = ~0)
@@ -338,8 +343,15 @@ namespace CyKim.Scroller
             }
 
             int end = (int)Math.Min((long)dataIndex + count, _layout.DataCount);
-            if (end <= start || !_hasLoaded || _reloadPending || _relayoutPending)
+            if (end <= start || !_hasLoaded)
             {
+                return;
+            }
+
+            if (_reloadPending || _relayoutPending)
+            {
+                // 기다리는 리로드·재배치가 셀을 다시 바인딩한다. 키 유지 리로드여도 이 갱신을 버리지 않게 모두 다시 바인딩하게 한다.
+                _forceRebindOnReload = true;
                 return;
             }
 
@@ -428,16 +440,23 @@ namespace CyKim.Scroller
             {
                 // 로드 전이면 첫 리로드가, 다시 읽을 요청(리로드·델리게이트 교체·축 전환·위치 유지 리로드)이 있으면 그 요청이 최종 데이터를 읽는다.
                 bool rereads = _reloadPending || (_relayoutPending && _relayoutRequery);
+                if (rereads && HasContentUpdates(ops))
+                {
+                    // 기록한 내용 갱신·다시 받기를 그 요청이 대신 처리한다. 키 유지 리로드여도 셀을 모두 다시 바인딩하게 한다.
+                    _forceRebindOnReload = true;
+                }
+
                 if (_initialized && _hasLoaded && !rereads)
                 {
                     // 연산이 없는 배치도 개수를 맞춰 본다 (사이 코드가 예외로 연산을 알리지 못한 채 finally에서 닫힌 배치 등).
+                    // 리로드로 바꾸는 경우는 PreserveCellsById와 무관하게 모든 셀을 다시 바인딩한다 (알리지 못한 변경·버린 내용 갱신까지 맞춘다).
                     int expected = _layout.DataCount + countDelta;
                     int actual = _delegate != null ? Mathf.Max(0, _delegate.GetNumberOfCells(this)) : 0;
                     if (actual != expected)
                     {
                         Debug.LogWarning(
                             $"[CyScroller] 증분 연산을 반영한 개수({expected})가 GetNumberOfCells({actual})와 다릅니다. ReloadData(ReloadAnchor.FirstVisible)로 다시 읽습니다.", this);
-                        ReloadData(ReloadAnchor.FirstVisible);
+                        RequestReload(ReloadAnchor.FirstVisible, 0f, false);
                     }
                     else if (ops.Count == 0)
                     {
@@ -451,7 +470,7 @@ namespace CyKim.Scroller
                     else if (_loop || _layout.IsLoop)
                     {
                         // 루프는 같은 데이터가 여러 슬롯에 있어 증분으로 옮기지 않고 앵커를 지키는 전체 리로드로 바꾼다.
-                        ReloadData(ReloadAnchor.FirstVisible);
+                        RequestReload(ReloadAnchor.FirstVisible, 0f, false);
                     }
                     else
                     {
@@ -517,12 +536,26 @@ namespace CyKim.Scroller
         /// 갱신(<see cref="RefreshCells"/>)만 있는 배치. 레이아웃·인덱스가 그대로이므로 활성 셀(루프 사본 포함)마다 그 항목에 모은 changeMask로
         /// <see cref="CyScrollerCellView.RefreshCellView(int)"/>를 한 번 부른다. 사용자 코드는 범위 갱신 중으로 돌려 활성 목록이 바뀌지 않게 하고(그 사이 요청은 미룬다),
         /// 콘텐츠가 옮겨졌으면 호출자(<see cref="FinishUpdates"/>)가 범위를 맞춘다. 재배치가 기다리면 그쪽이 셀을 모두 다시 바인딩하고,
-        /// 배치 중 미룬 <see cref="ClearActive"/>가 있으면 셀을 파괴하므로 부르지 않는다.
+        /// 배치 중 미룬 <see cref="ClearActive"/>가 있으면 셀을 파괴하므로 부르지 않는다. 키 유지 리로드·재배치가 셀을 새 인덱스로 맞추기 전이면
+        /// (다시 읽는 중의 델리게이트·트윈 멈춤 알림 안에서 닫은 배치) 배치 밖 <see cref="RefreshCells"/>처럼 맞춘 뒤 남은 셀에 부르도록 미룬다.
         /// </summary>
         private void ApplyRefreshes(List<UpdateOp> ops)
         {
+            if (_deferRefreshes)
+            {
+                // 활성 셀이 아직 옛 인덱스다. 셀을 새 인덱스로 맞춘 뒤 남은 셀에 부른다 (갱신만 있는 배치라 인덱스가 지금 데이터 기준이므로 그대로 옮겨 적는다).
+                for (int i = 0; i < ops.Count; i++)
+                {
+                    _deferredRefreshes.Add(ops[i]);
+                }
+
+                return;
+            }
+
             if (_relayoutPending || _clearActivePending)
             {
+                // 재배치가 셀을 다시 바인딩한다 (갱신을 버리지 않게 키 유지 없이).
+                _forceRebindOnReload |= _relayoutPending;
                 return;
             }
 
@@ -581,6 +614,8 @@ namespace CyKim.Scroller
 
             if (!_hasLoaded || _reloadPending || _relayoutPending)
             {
+                // 기다리는 리로드·재배치가 셀을 다시 바인딩한다 (갱신을 버리지 않게 키 유지 없이).
+                _forceRebindOnReload |= _reloadPending || _relayoutPending;
                 ops.Clear();
                 return;
             }
@@ -668,6 +703,21 @@ namespace CyKim.Scroller
             for (int i = 0; i < ops.Count; i++)
             {
                 if (ops[i].Type != UpdateOpType.Refresh)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>내용을 바꾸는 연산(갱신·다시 받기)이 있는지. 구조 연산(삽입·삭제·이동)만 있으면 false.</summary>
+        private static bool HasContentUpdates(List<UpdateOp> ops)
+        {
+            for (int i = 0; i < ops.Count; i++)
+            {
+                UpdateOpType type = ops[i].Type;
+                if (type == UpdateOpType.Refresh || type == UpdateOpType.Reload)
                 {
                     return true;
                 }
@@ -934,9 +984,8 @@ namespace CyKim.Scroller
         }
 
         /// <summary>
-        /// 연산을 반영한 배치·위치에 활성 셀을 맞춘다. 표시 끝 → 회수 → 인덱스 변경 알림·재배치 → 내용 갱신 → 새 자리 바인딩 → 표시 시작 순서이고,
-        /// 남은 셀은 다시 바인딩하지 않는다(다시 받을 항목의 셀은 회수하고 새로 바인딩한다). 계속 보이는 셀에는 표시 이벤트가 없다.
-        /// 활성 목록·범위는 인덱스 변경 알림 전에 맞춘다.
+        /// 연산을 반영한 배치·위치에 활성 셀을 맞춘다. 옛 활성 셀마다 연산을 거친 새 인덱스와 배치에서 모은 changeMask를 구해(<see cref="MapActiveCellThroughUpdates"/>)
+        /// <see cref="ApplyReconcileTargets"/>로 맞춘다. 남은 셀은 다시 바인딩하지 않는다(다시 받을 항목의 셀은 회수하고 새로 바인딩한다).
         /// </summary>
         private void ReconcileActiveCells(List<UpdateOp> ops)
         {
@@ -965,6 +1014,20 @@ namespace CyKim.Scroller
                 targets.Add(target);
                 masks.Add(mask);
             }
+
+            ApplyReconcileTargets(first, last, visibleFirst, visibleLast);
+        }
+
+        /// <summary>
+        /// 옛 활성 셀(목록 i)을 <see cref="_reconcileTargets"/>[i] 새 슬롯(-1이면 회수)으로 옮겨 새 활성 범위 [first, last]·표시 범위에 맞춘다.
+        /// 표시 끝 → 회수 → 인덱스 변경 알림·재배치 → 내용 갱신(<see cref="_reconcileMasks"/>와 맞추기 전에 미룬 갱신) → 새 자리 바인딩 → 표시 시작 순서이고,
+        /// 남은 셀은 다시 바인딩하지 않는다. 계속 보이는 셀에는 표시 이벤트가 없다. 활성 목록·범위는 인덱스 변경 알림 전에 맞춘다.
+        /// 증분 변경과 키 유지 리로드가 같이 쓴다. 새 슬롯은 [first, last] 안이고 서로 달라야 한다(루프면 데이터 인덱스는 슬롯에서 구한다). 할당 없음.
+        /// </summary>
+        private void ApplyReconcileTargets(int first, int last, int visibleFirst, int visibleLast)
+        {
+            List<int> targets = _reconcileTargets;
+            List<int> masks = _reconcileMasks;
 
             // 1. 표시 끝: 빠지는 셀과 남지만 새 표시 범위 밖으로 가는 셀. 셀은 목록에 둔 채 알린다.
             for (int i = 0; i < _activeCells.Count; i++)
@@ -1016,11 +1079,12 @@ namespace CyKim.Scroller
                     continue;
                 }
 
+                int dataIndex = _layout.SlotToDataIndex(target);
                 _activeCells[target - first] = cell;
                 previousIndices[target - first] = cell.DataIndex;
-                cell.DataIndex = target;
+                cell.DataIndex = dataIndex;
                 cell.CellIndex = target;
-                AssignItemId(cell, target);
+                AssignItemId(cell, dataIndex);
             }
 
             _activeFirst = hasRange ? first : 0;
@@ -1043,8 +1107,9 @@ namespace CyKim.Scroller
 
                 int slot = first + i;
                 int previousIndex = previousIndices[i];
-                if (previousIndex == slot)
+                if (previousIndex == cell.DataIndex)
                 {
+                    // 같은 항목 자리(루프면 다른 사본 슬롯일 수 있다)다. 알림 없이 옮긴다.
                     PositionCell(cell, slot);
                     continue;
                 }
@@ -1060,8 +1125,19 @@ namespace CyKim.Scroller
             }
 
             // 5. 내용 갱신: 남은 셀마다 배치에서 모은 changeMask와 적용 중(셀을 맞추기 전) 콜백이 부른 RefreshCells를 OR로 합쳐 한 번 부른다.
-            //    새로 바인딩할 셀(새 자리·삽입·다시 받을 항목)은 최신 데이터로 바인딩하므로 부르지 않는다. 리로드·재배치가 기다리면 그쪽이 셀을 다시 바인딩한다.
-            if (!_reloadPending && !_relayoutPending)
+            //    새로 바인딩할 셀(새 자리·삽입·다시 받을 항목)은 최신 데이터로 바인딩하므로 부르지 않는다. 리로드·재배치가 기다리면 그쪽이 셀을 다시 바인딩한다
+            //    (키 유지 리로드여도 이 갱신을 버리지 않게 모두 다시 바인딩하게 한다).
+            if (_reloadPending || _relayoutPending)
+            {
+                bool dropped = _deferredRefreshes.Count > 0;
+                for (int i = 0; i < targets.Count && !dropped; i++)
+                {
+                    dropped = targets[i] >= 0 && masks[i] != 0;
+                }
+
+                _forceRebindOnReload |= dropped;
+            }
+            else
             {
                 for (int i = 0; i < previousCells.Count; i++)
                 {
@@ -1102,9 +1178,13 @@ namespace CyKim.Scroller
             }
         }
 
-        /// <summary>앵커 보존 리로드(FirstVisible)를 미뤄 둔다. 이미 미룬 리로드가 있으면 그 요청이 최종 데이터를 다시 읽으므로 그대로 둔다.</summary>
+        /// <summary>
+        /// 앵커 보존 리로드(FirstVisible)를 미뤄 둔다. 이미 미룬 리로드가 있으면 그 요청이 최종 데이터를 다시 읽으므로 그대로 둔다.
+        /// 기록한 다시 받기·내용 갱신까지 반영해야 하므로 <see cref="PreserveCellsById"/>와 무관하게 셀을 모두 다시 바인딩한다 (이미 미룬 키 유지 리로드도).
+        /// </summary>
         private void ScheduleStructuralReload()
         {
+            _forceRebindOnReload = true;
             if (_reloadPending)
             {
                 return;
@@ -1113,6 +1193,7 @@ namespace CyKim.Scroller
             _reloadPending = true;
             _pendingReloadAnchor = ReloadAnchor.FirstVisible;
             _pendingReloadFactor = 0f;
+            _pendingReloadPreservesCells = false;
         }
 
         /// <summary>
