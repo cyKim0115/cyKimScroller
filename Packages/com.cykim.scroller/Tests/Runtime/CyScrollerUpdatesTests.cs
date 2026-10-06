@@ -1262,6 +1262,34 @@ namespace CyKim.Scroller.Tests
         }
 
         [UnityTest]
+        public IEnumerator Alignment_AlignedItemMoved_ReleasesAlignmentAndKeepsScreen()
+        {
+            Create(100);
+            int moved = _data.Items[30];
+            Scroller.JumpToDataIndex(30, 0.5f, 0.5f, false);   // 30번 가운데: 3050 − 200. 뷰포트 [2850, 3250]: 28~32번
+            Assert.AreEqual(2850f, Scroller.ScrollPosition, EPSILON);
+            int front = _data.Items[28];
+
+            // 정렬 대상(30번)을 맨 위로 올린다. 정렬이 따라가면 화면이 목록 맨 위로 튄다.
+            _data.Move(30, 0);
+            Scroller.MoveCell(30, 0);
+
+            // 맨 앞 항목(28번) 앞에 100이 들어간 만큼만 보정한다.
+            Assert.AreEqual(0, _data.Items.IndexOf(moved));
+            Assert.AreEqual(2950f, Scroller.ScrollPosition, EPSILON, "정렬 대상을 옮겨도 화면이 그 항목으로 튀지 않는다");
+            Assert.AreEqual(-50f, ScreenOffsetOfItem(front), EPSILON);
+            AssertMatchesData("move aligned item");
+
+            // 정렬이 풀렸으므로 뷰포트 크기가 바뀌어도 옮겨진 항목으로 가지 않는다.
+            var scrollRect = (RectTransform)_fixture.ScrollRect.transform;
+            scrollRect.sizeDelta = new Vector2(ScrollerFixture.VIEWPORT_WIDTH, 300f);
+            yield return null;
+            Assert.AreEqual(2950f, Scroller.ScrollPosition, EPSILON);
+            Assert.AreEqual(-50f, ScreenOffsetOfItem(front), EPSILON);
+            AssertMatchesData("viewport resize after moving aligned item");
+        }
+
+        [UnityTest]
         public IEnumerator PendingAnchor_IndexFollowsInsert()
         {
             Create(100);
