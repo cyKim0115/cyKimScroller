@@ -11,7 +11,7 @@
 - `ResizeAnchor`(Auto·Start·End): Auto는 다른 증분 변경과 같은 위치 보존, Start·End는 그 셀의 위·아래 가장자리를 화면에 고정한다. 결과는 스크롤 범위로 자른다
 - 셀 뷰 `RequestResize(duration, tweenType, anchor)`: 그 셀의 `DataIndex`로 `ResizeCellView`를 부른다
 - Profiler 마커 `CyScroller.Resize` (크기 애니메이션 한 걸음)
-- 정착 상태 `IsSettled`와 `ScrollerSettled`(`ScrollerSettledHandler`): 드래그 중이 아니고 트윈·스냅 대기가 없고 스크롤 속도가 `SettleVelocityThreshold`(기본 10px/s) 이하이면 정착이다.
+- 정착 상태 `IsSettled`와 `ScrollerSettled`(`ScrollerSettledHandler`): 드래그 중이 아니고 트윈·스냅 대기·크기 애니메이션(`IsResizing`)이 없고 스크롤 속도가 `SettleVelocityThreshold`(기본 10px/s) 이하이면 정착이다.
   정착하지 않은 상태에서 정착으로 바뀔 때 LateUpdate 끝에서 한 번 알리고(첫 로드 직후 제외), 그 뒤에도 정착해 있으면 활성 셀마다 `CyScrollerCellView.OnScrollerSettled()`를 부른다
 - 고속 스크롤 `IsFastScrolling`과 `ScrollerFastScrollingChanged`(`ScrollerFastScrollingChangedHandler`): 스크롤 속도(트윈이면 트윈 이동 속도, 아니면 관성 속도)가
   뷰포트 길이 × `FastScrollEnterThreshold`(기본 3)/s 이상이면 켜지고 × `FastScrollExitThreshold`(기본 1.5)/s 미만이면 꺼진다 (히스테리시스, 들어가는 값 0이면 끔)

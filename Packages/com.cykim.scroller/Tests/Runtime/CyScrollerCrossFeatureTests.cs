@@ -8,7 +8,7 @@ using UnityEngine.TestTools.Constraints;
 namespace CyKim.Scroller.Tests
 {
     /// <summary>
-    /// 기능이 겹칠 때: 크기 애니메이션 × 끝 근접, 끝 근접 핸들러 삽입 × 점프 트윈 × 정착·고속 스크롤,
+    /// 기능이 겹칠 때: 크기 애니메이션 × 끝 근접·정착, 끝 근접 핸들러 삽입 × 점프 트윈 × 정착·고속 스크롤,
     /// 풀 미리 채우기·회수 상한 × 끝 근접 페이지 불러오기·크기 애니메이션·정착 알림, 모두 켠 상태의 할당.
     /// </summary>
     public class CyScrollerCrossFeatureTests
@@ -156,7 +156,7 @@ namespace CyKim.Scroller.Tests
         }
 
         [UnityTest]
-        public IEnumerator ShrinkingVisibleCellsAtEnd_ClampsInsideRange_WithoutOverscrollSettle()
+        public IEnumerator ShrinkingVisibleCellsAtEnd_ClampsInsideRange_AndSettlesOnceAfterAnimation()
         {
             Create(50);
             Scroller.NearEdgeDistance = NEAR_DISTANCE;
@@ -181,9 +181,132 @@ namespace CyKim.Scroller.Tests
             Assert.AreEqual(4500f, Scroller.ScrollSize, EPSILON);
             Assert.AreEqual(Scroller.ScrollSize, Scroller.ScrollPosition, POSITION_EPSILON, "새 끝에 붙어 있다");
             Assert.IsTrue(Scroller.IsSettled);
-            Assert.AreEqual(0, _settledEvents, "Elastic 되돌아오기가 없어 정착 이벤트도 없다");
+            Assert.AreEqual(1, _settledEvents, "애니메이션이 끝난 뒤 한 번 (Elastic 되돌아오기로 한 번 더 오지 않는다)");
             CollectionAssert.AreEqual(new[] { ScrollEdge.End }, _edgeEvents, "개수가 그대로라 잠긴 채");
             AssertActiveCellsMatch("after shrink at end");
+        }
+
+        #endregion
+
+        #region 크기 변경 × 정착
+
+        /// <summary>활성 셀마다 OnScrollerSettled를 받은 횟수가 expected인지.</summary>
+        private void AssertActiveCellsSettled(int expected, string context)
+        {
+            IReadOnlyList<CyScrollerCellView> cells = Scroller.ActiveCellViews;
+            Assert.Greater(cells.Count, 0, context);
+            for (int i = 0; i < cells.Count; i++)
+            {
+                var view = (TestCellView)cells[i];
+                Assert.AreEqual(expected, view.SettledCount, $"{context}: {view.DataIndex}번 OnScrollerSettled");
+            }
+        }
+
+        [Test]
+        public void ResizeAnimation_IsUnsettledUntilDone_ThenSettlesOnceWithCellHooks()
+        {
+            Create(100);
+            Scroller.UpdateScrollState(0f);
+            Assert.IsTrue(Scroller.IsSettled);
+
+            // 바로 바꾸기와 지금 크기와 같은 요청은 정착을 깨지 않는다.
+            _data.Sizes[3] = 150f;
+            Scroller.ResizeCellView(3);
+            Scroller.ResizeCellView(4, 1f, TweenType.Linear);   // 크기 그대로
+            Assert.IsFalse(Scroller.IsResizing);
+            Assert.IsTrue(Scroller.IsSettled);
+            Scroller.UpdateScrollState(0f);
+            Assert.AreEqual(0, _settledEvents);
+
+            // 애니메이션이 도는 동안은 속도가 0이어도 정착이 아니다. 화면 밖 항목도 같다.
+            _data.Sizes[2] = 200f;
+            _data.Sizes[80] = 50f;
+            Scroller.ResizeCellView(2, 1f, TweenType.Linear);
+            Scroller.ResizeCellView(80, 0.5f, TweenType.Linear);
+            Assert.IsFalse(Scroller.IsSettled);
+            Scroller.UpdateScrollState(0f);
+            Assert.AreEqual(0, _settledEvents, "정착에서 벗어날 때는 알리지 않는다");
+
+            Scroller.UpdateResizeAnimations(0.5f);
+            Scroller.UpdateScrollState(0f);
+            Assert.IsTrue(Scroller.IsResizing, "화면 밖 애니메이션만 끝났다");
+            Assert.AreEqual(0, _settledEvents);
+
+            Scroller.UpdateResizeAnimations(0.5f);
+            Assert.IsFalse(Scroller.IsResizing);
+            Assert.IsTrue(Scroller.IsSettled);
+            Scroller.UpdateScrollState(0f);
+            Assert.AreEqual(1, _settledEvents, "끝난 걸음에 한 번");
+            AssertActiveCellsSettled(1, "after resize");
+            Scroller.UpdateScrollState(0f);
+            Assert.AreEqual(1, _settledEvents);
+        }
+
+        [Test]
+        public void TweenEndingBeforeResize_SettlesOnlyWhenResizeEnds()
+        {
+            Create(200);
+            Scroller.UpdateScrollState(0f);
+            Scroller.JumpToDataIndex(50, tweenType: TweenType.Linear, tweenTime: 0.2f);
+            _data.Sizes[52] = 300f;
+            Scroller.ResizeCellView(52, 0.6f, TweenType.Linear);
+
+            int tweenEndStep = -1;
+            int resizeEndStep = -1;
+            int settledStep = -1;
+            for (int step = 0; step < 20; step++)
+            {
+                // LateUpdate 순서: 크기 애니메이션 → 트윈 → 정착 판단.
+                Scroller.UpdateResizeAnimations(0.05f);
+                if (Scroller.IsTweening)
+                {
+                    Scroller.UpdateTween(0.05f);
+                }
+
+                int before = _settledEvents;
+                Scroller.UpdateScrollState(Scroller.ScrollSpeed);
+                tweenEndStep = tweenEndStep < 0 && !Scroller.IsTweening ? step : tweenEndStep;
+                resizeEndStep = resizeEndStep < 0 && !Scroller.IsResizing ? step : resizeEndStep;
+                settledStep = settledStep < 0 && _settledEvents > before ? step : settledStep;
+            }
+
+            Assert.Less(tweenEndStep, resizeEndStep, "트윈이 먼저 끝난다");
+            Assert.AreEqual(resizeEndStep, settledStep, "크기 애니메이션이 끝난 걸음에 정착");
+            Assert.AreEqual(1, _settledEvents, "트윈이 끝났을 때는 오지 않는다");
+            Assert.AreEqual(Scroller.GetCellStart(50), Scroller.ScrollPosition, POSITION_EPSILON);
+            AssertActiveCellsSettled(1, "after tween and resize");
+        }
+
+        [Test]
+        public void SettledHandlerStartingResize_DefersCellHooksUntilResizeEnds()
+        {
+            Create(100);
+            bool expanded = false;
+            Scroller.ScrollerSettled += scroller =>
+            {
+                if (!expanded)
+                {
+                    expanded = true;
+                    _data.Sizes[1] = 250f;
+                    scroller.ResizeCellView(1, 0.3f, TweenType.Linear);
+                }
+            };
+
+            Scroller.UpdateScrollState(100f);
+            Scroller.UpdateScrollState(0f);
+            Assert.AreEqual(1, _settledEvents);
+            Assert.IsTrue(Scroller.IsResizing);
+            AssertActiveCellsSettled(0, "handler started a resize");
+
+            for (int i = 0; i < 4; i++)
+            {
+                Scroller.UpdateResizeAnimations(0.1f);
+                Scroller.UpdateScrollState(0f);
+            }
+
+            Assert.AreEqual(2, _settledEvents, "애니메이션이 끝난 뒤 다시 정착");
+            AssertActiveCellsSettled(1, "after resize");
+            AssertActiveCellsMatch("after resize");
         }
 
         #endregion
