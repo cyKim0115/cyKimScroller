@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-08
+
 ### Added
 - 셀 크기 변경 `ResizeCellView(dataIndex, duration, tweenType, anchor)`: 그 항목의 크기만 델리게이트에 다시 묻고, 셀은 다시 바인딩하지 않은 채(`BindVersion` 그대로) 크기·위치만 바꾼다.
   `duration`이 0보다 크면 LateUpdate에서 그 시간 동안 크기를 바꾸고(`IsResizing`), 같은 항목에 새 요청이 오면 지금 크기에서 이어 간다.

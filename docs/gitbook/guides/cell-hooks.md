@@ -12,7 +12,7 @@ icon: eye
 | 정말 화면에 보이기 시작했나 / 사라졌나 | `OnBecameVisible()` / `OnBecameHidden()`, 이벤트 `CellViewWillDisplay` / `CellViewDidEndDisplay` |
 | 뷰포트 안 어디에 있나 | `OnViewportPositionChanged(normalizedOffset)`, 이벤트 `CellViewPositionChanged` |
 | 지금 바인딩이 아직 유효한가 | `BindVersion` |
-| 스크롤이 멈췄나 (미뤄 둔 로드 시작) | `OnScrollerSettled()`, 이벤트 `ScrollerSettled` — [정착과 고속 스크롤](settled-and-fast-scrolling.md) (다음 버전) |
+| 스크롤이 멈췄나 (미뤄 둔 로드 시작) | `OnScrollerSettled()`, 이벤트 `ScrollerSettled` — [정착과 고속 스크롤](settled-and-fast-scrolling.md) |
 
 ## 표시 이벤트
 

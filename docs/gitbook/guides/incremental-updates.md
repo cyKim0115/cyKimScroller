@@ -81,7 +81,7 @@ _scroller.RefreshCells(7, 3, MessageCellView.TEXT);
 _scroller.ReloadCellView(12);
 ```
 
-셀 종류와 내용은 그대로이고 크기만 바뀌었으면 셀을 다시 받지 않는 [`ResizeCellView`](cell-resize.md)를 쓴다 (다음 버전).
+셀 종류와 내용은 그대로이고 크기만 바뀌었으면 셀을 다시 받지 않는 [`ResizeCellView`](cell-resize.md)를 쓴다.
 
 `changeMask`는 스크롤러가 해석하지 않는 사용자 정의 비트 플래그다. 셀 뷰가 `RefreshCellView(int changeMask)`를 재정의해 바뀐 부분만 다시 그린다.
 
