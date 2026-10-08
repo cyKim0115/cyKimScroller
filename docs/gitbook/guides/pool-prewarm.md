@@ -8,7 +8,7 @@ icon: recycle
 <figure><img src="../../../.gitbook/assets/cover-pool.png" alt="120개 항목을 페이지 3개로 불러온 뒤에도 Cells created 14, in pool 6, active 8로 표시된 화면"><figcaption><p>처음에 14개를 미리 만들고, 페이지가 3개로 늘어도 그 14개만 돌려 쓴다</p></figcaption></figure>
 
 {% hint style="info" %}
-v0.2.1 다음 버전에 들어갈 기능이다 ([변경 내역](../../../Packages/com.cykim.scroller/CHANGELOG.md)의 Unreleased). 다음 태그 전까지는 설치 주소 끝의 `#v0.2.1`을 master의 커밋 SHA로 바꿔 쓴다.
+v0.3.0에서 추가된 기능이다 ([변경 내역](../../../Packages/com.cykim.scroller/CHANGELOG.md)). 이전 버전을 쓰고 있으면 설치 주소 끝을 `#v0.3.0`으로 올린다.
 {% endhint %}
 
 셀 뷰는 처음 필요할 때 프리팹에서 만들어진다(Instantiate). 셀이 무거우면 첫 스크롤에서 끊김이 보일 수 있다.

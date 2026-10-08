@@ -39,12 +39,12 @@
 | 7 | 공개 앵커·상태 API, `ReloadData(ReloadAnchor)`, 준비 전 요청의 지연 복원 | 높음 | S | 중: 트윈 중 복원, 루프 가운데 세트 매핑 | 2·6 | AND·FLT·Web |
 | 8 | 부분 갱신 `RefreshCells(changeMask)`·`ReloadCellView` (활성 셀만, 크기 불변) | 높음 | S | 낮음: 활성 셀에만 전달됨을 문서화 | — | AND·iOS |
 | 9 | 증분 구조 변경 `Begin/EndUpdates`, `InsertCells/RemoveCells/MoveCell`, Reconcile | 높음 | M | 높음: 인덱스 장부·재진입 → 기준 모델 비교 테스트 | 2·7 | AND·iOS |
-| 10 | 셀 크기 변경과 스크롤 보정 (`SetCellViewSize`, 애니메이션, `ResizeAnchor`) — **브랜치 구현(미병합)**: `feature/cell-resize`, API는 `ResizeCellView`(크기는 델리게이트 기준) | 높음 | M | 중: 루프 SetCount 변화, 탄성 구간 | 2·3 | iOS·Web·FLT |
+| 10 | 셀 크기 변경과 스크롤 보정 (`SetCellViewSize`, 애니메이션, `ResizeAnchor`) — **v0.3.0 완료**: API는 `ResizeCellView`(크기는 델리게이트 기준) | 높음 | M | 중: 루프 SetCount 변화, 탄성 구간 | 2·3 | iOS·Web·FLT |
 | 11 | 손을 뗄 때 정하는 스냅 전략 (착지 예측·한 칸·페이지, 속도가 끊기지 않는 트윈) **사용자 선택 필요(기본 감각)** | 높음 | M | 중: 감각 튜닝, 끝단 오버슈트 이징 | 2 | AND·iOS·FLT |
-| 12 | 끝 근접 이벤트 `ScrollerNearEdge`, 범위 로더 헬퍼 — **브랜치 구현(미병합)**: `feature/near-edge`, 범위 로더 헬퍼는 만들지 않고 README 예시로 대신 | 중 | S | 낮음: 래치, 콘텐츠가 뷰포트보다 짧은 경우 | 7·9 | Web·AND |
+| 12 | 끝 근접 이벤트 `ScrollerNearEdge`, 범위 로더 헬퍼 — **v0.3.0 완료**: 범위 로더 헬퍼는 만들지 않고 README 예시로 대신 | 중 | S | 낮음: 래치, 콘텐츠가 뷰포트보다 짧은 경우 | 7·9 | Web·AND |
 | 13 | 채팅 모드: 짧은 콘텐츠 끝 정렬, 끝 따라가기, `IsAtEnd`, 점프 없는 프리펜드(앞쪽 삽입) **사용자 선택 필요** | 높음 | M | 중: 드래그·관성 중 프리펜드 | 2·7·9·10 | Web·AND·FLT |
-| 14 | 풀 프리웜(동기·`InstantiateAsync`), 식별자별 풀 상한 — **브랜치 구현(미병합)**: `feature/pool-prewarm` | 중 | S | 낮음: 비동기 생성 중 초과분은 완료 시 정리 | — | AND·U |
-| 15 | 정착 상태 `IsSettled`/`ScrollerSettled`, `IsFastScrolling` (플레이스홀더 패턴) — **브랜치 구현(미병합)**: `feature/settled-state` | 중 | S | 낮음: 임계값에 히스테리시스 필요 | 4 | Web·FLT |
+| 14 | 풀 프리웜(동기·`InstantiateAsync`), 식별자별 풀 상한 — **v0.3.0 완료** | 중 | S | 낮음: 비동기 생성 중 초과분은 완료 시 정리 | — | AND·U |
+| 15 | 정착 상태 `IsSettled`/`ScrollerSettled`, `IsFastScrolling` (플레이스홀더 패턴) — **v0.3.0 완료** | 중 | S | 낮음: 임계값에 히스테리시스 필요 | 4 | Web·FLT |
 | 16 | 중첩 스크롤 제스처 중재 (직교 드래그를 부모로 넘기는 별도 컴포넌트) | 높음 | M | 중: 제스처 도중 행이 재활용되면 OnDisable에서 부모 OnEndDrag 호출 | 4 | AND·iOS·U |
 | 17 | 스티키 섹션 헤더 (뷰포트 오버레이 레이어, 밀어내기) **사용자 선택 필요(중복 헤더 처리)** | 중~높음 | M | 중: 같은 인덱스에 뷰 두 개, 루프에서 비활성 | 3 | iOS·AND·FLT |
 | 18 | 고정 머리·꼬리 콘텐츠 (재활용 안 하는 헤더·푸터를 패딩으로 편입) | 중 | S | 낮음: 알림 없는 리사이즈 | 2·10 | Web·FLT |
@@ -193,12 +193,15 @@ protected internal virtual void OnViewportPositionChanged(float normalizedOffset
 ```
 
 ## 이후 후보
-- 10 셀 크기 변경과 보정 (v0.3 1순위): `SetCellViewSize(dataIndex, size, duration, tweenType, ResizeAnchor)`, `RequestResize()`. 진행 중인 크기 변화는 접두합 재구성 없이 임시 항 하나로 처리합니다.
+
+> **v0.3.0 (2026-10-08) 반영:** 10·12·14·15위를 v0.3.0으로 냈습니다(기능마다 피처 브랜치, 교차 기능 PlayMode 테스트로 통합 검증). 실제 API와 동작은 패키지 README·CHANGELOG가 기준입니다.
+
+- 10 셀 크기 변경과 보정 (v0.3 1순위): `SetCellViewSize(dataIndex, size, duration, tweenType, ResizeAnchor)`, `RequestResize()`. 진행 중인 크기 변화는 접두합 재구성 없이 임시 항 하나로 처리합니다. — **v0.3.0 완료**: `ResizeCellView(dataIndex, duration, tweenType, anchor)`(크기는 델리게이트에 다시 묻기)와 `RequestResize()`
 - 11 스냅 전략 (v0.3): `SnapMode { VelocityThreshold, PredictedLanding, OneCellPerSwipe, Page }`와 커스텀 `ICyScrollerSnapStrategy`. 기본값은 v0.1 동작(속도 임계값 스냅)을 권장합니다. **사용자 선택 필요:** 플릭 임계값과 곡선.
-- 12 끝 근접 이벤트 + `CyScrollerRangeLoader` (v0.3): 위아래 양 끝에 래치를 걸고, 루프 모드에서는 비활성입니다.
+- 12 끝 근접 이벤트 + `CyScrollerRangeLoader` (v0.3): 위아래 양 끝에 래치를 걸고, 루프 모드에서는 비활성입니다. — **v0.3.0 완료**: `ScrollerNearEdge`·`NearEdgeDistance`. `CyScrollerRangeLoader`는 만들지 않고 README 예시로 대신
 - 13 채팅 모드 (v0.3): `ShortContentAlignment`, `FollowOutput`, `AtEndChanged`, TMP `GetPreferredValues` 기반 샘플. **사용자 선택 필요:** 위치 0에서 프리펜드할 때 같은 메시지를 유지할지 맨 위를 유지할지, 오버스크롤 중 끝 따라가기 처리.
-- 14 풀 프리웜과 식별자별 상한 (v0.3): `Prewarm`, `PrewarmAsync`, `SetMaxRecycled`. 상한을 넘으면 가장 오래된 항목부터 Destroy합니다.
-- 15 정착 상태와 고속 스크롤 플래그 (v0.3): 정착할 때 셀마다 `OnScrollerSettled` 가상 메서드를 호출합니다.
+- 14 풀 프리웜과 식별자별 상한 (v0.3): `Prewarm`, `PrewarmAsync`, `SetMaxRecycled`. 상한을 넘으면 가장 오래된 항목부터 Destroy합니다. — **v0.3.0 완료**
+- 15 정착 상태와 고속 스크롤 플래그 (v0.3): 정착할 때 셀마다 `OnScrollerSettled` 가상 메서드를 호출합니다. — **v0.3.0 완료**
 - 16 중첩 제스처 중재 컴포넌트 (v0.3, v0.1 범위 밖이던 항목): 같은 축 경계에서 넘겨주기는 보류합니다.
 - 17 스티키 섹션 헤더 (v0.4): `ICyScrollerSectionDelegate`와 오버레이 레이어. 점프할 때 `scrollPaddingStart`를 반영합니다.
 - 18 고정 머리·꼬리 콘텐츠 (v0.4): `_leadingContent/_trailingContent`를 패딩으로 편입합니다.

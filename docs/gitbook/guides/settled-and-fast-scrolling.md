@@ -8,7 +8,7 @@ icon: hourglass-end
 <figure><img src="../../../.gitbook/assets/settled.gif" alt="빠르게 넘기는 동안 IsFastScrolling이 켜지고 새로 나타난 셀은 회색 플레이스홀더로 보이다가, 멈춰서 ScrollerSettled가 오면 썸네일이 채워지는 모습"><figcaption><p>빠르게 넘기는 동안 바인딩된 셀은 플레이스홀더로 두고, 정착하면 그 셀만 불러온다</p></figcaption></figure>
 
 {% hint style="info" %}
-v0.2.1 다음 버전에 들어갈 기능이다 ([변경 내역](../../../Packages/com.cykim.scroller/CHANGELOG.md)의 Unreleased). 다음 태그 전까지는 설치 주소 끝의 `#v0.2.1`을 master의 커밋 SHA로 바꿔 쓴다.
+v0.3.0에서 추가된 기능이다 ([변경 내역](../../../Packages/com.cykim.scroller/CHANGELOG.md)). 이전 버전을 쓰고 있으면 설치 주소 끝을 `#v0.3.0`으로 올린다.
 {% endhint %}
 
 썸네일·동영상처럼 무거운 로드를 셀마다 바로 시작하면, 빠르게 지나가는 셀까지 불러오느라 네트워크와 메모리를 쓴다.

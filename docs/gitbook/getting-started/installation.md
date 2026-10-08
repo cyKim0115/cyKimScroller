@@ -16,7 +16,7 @@ CyKim Scroller는 git URL로 가져오는 UPM 패키지다. Unity 6000.0 이상,
 3. 아래 주소를 넣고 **Install**을 누른다.
 
 ```
-https://github.com/cyKim0115/cyKimScroller.git?path=/Packages/com.cykim.scroller#v0.2.1
+https://github.com/cyKim0115/cyKimScroller.git?path=/Packages/com.cykim.scroller#v0.3.0
 ```
 {% endtab %}
 
@@ -27,7 +27,7 @@ https://github.com/cyKim0115/cyKimScroller.git?path=/Packages/com.cykim.scroller
 ```json
 {
   "dependencies": {
-    "com.cykim.scroller": "https://github.com/cyKim0115/cyKimScroller.git?path=/Packages/com.cykim.scroller#v0.2.1"
+    "com.cykim.scroller": "https://github.com/cyKim0115/cyKimScroller.git?path=/Packages/com.cykim.scroller#v0.3.0"
   }
 }
 ```
@@ -41,7 +41,7 @@ https://github.com/cyKim0115/cyKimScroller.git?path=/Packages/com.cykim.scroller
 
 ## 버전 올리기
 
-`#v0.2.1` 부분을 새 태그로 바꾼다. 바뀐 점은 [변경 내역](../../../Packages/com.cykim.scroller/CHANGELOG.md)에 있다.
+`#v0.3.0` 부분을 새 태그로 바꾼다. 바뀐 점은 [변경 내역](../../../Packages/com.cykim.scroller/CHANGELOG.md)에 있다.
 
 ## 샘플 가져오기
 

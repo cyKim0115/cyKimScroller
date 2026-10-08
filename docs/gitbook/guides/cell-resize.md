@@ -8,7 +8,7 @@ icon: expand
 <figure><img src="../../../.gitbook/assets/cell-resize.gif" alt="Item 1이 80px에서 210px로 부드럽게 펼쳐졌다가 다시 접히고, 그동안 IsResizing이 켜지고 IsSettled가 꺼지는 모습"><figcaption><p>Item 1을 펼쳤다가 접는다. 같은 셀이라 bind 버전이 그대로이고, 애니메이션이 끝나면 정착 이벤트가 온다</p></figcaption></figure>
 
 {% hint style="info" %}
-v0.2.1 다음 버전에 들어갈 기능이다 ([변경 내역](../../../Packages/com.cykim.scroller/CHANGELOG.md)의 Unreleased). 다음 태그 전까지는 설치 주소 끝의 `#v0.2.1`을 master의 커밋 SHA로 바꿔 쓴다.
+v0.3.0에서 추가된 기능이다 ([변경 내역](../../../Packages/com.cykim.scroller/CHANGELOG.md)). 이전 버전을 쓰고 있으면 설치 주소 끝을 `#v0.3.0`으로 올린다.
 {% endhint %}
 
 펼치기·접기처럼 셀 종류와 내용은 그대로이고 크기만 바뀌면 `ResizeCellView`를 부른다.

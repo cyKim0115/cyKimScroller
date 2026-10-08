@@ -20,11 +20,11 @@ icon: gauge
 | `InsertRemoveMove_AfterWarmup_DoesNotAllocate` | 증분 삽입·삭제·이동 |
 | `RefreshAndReload_AfterWarmup_DoesNotAllocate` | 부분 갱신·다시 받기 |
 | `PreservingReloads_AfterWarmup_DoNotAllocate` | 키 유지 리로드 |
-| `ResizeAnimation_AfterWarmup_DoesNotAllocate` | 셀 크기 애니메이션 (다음 버전) |
-| `ScrollState_DoesNotAllocate` | 정착·고속 스크롤 판단 (다음 버전) |
-| `NearEdges_DoesNotAllocate` | 끝 근접 판단 (다음 버전) |
-| `RecycleWithCap_DoesNotAllocate` | 회수 상한을 둔 스크롤 (다음 버전) |
-| `AllFeaturesOn_ScrollResizeSettleNearEdge_DoesNotAllocate` | 위 네 기능을 모두 켠 스크롤 (다음 버전) |
+| `ResizeAnimation_AfterWarmup_DoesNotAllocate` | 셀 크기 애니메이션 |
+| `ScrollState_DoesNotAllocate` | 정착·고속 스크롤 판단 |
+| `NearEdges_DoesNotAllocate` | 끝 근접 판단 |
+| `RecycleWithCap_DoesNotAllocate` | 회수 상한을 둔 스크롤 |
+| `AllFeaturesOn_ScrollResizeSettleNearEdge_DoesNotAllocate` | 위 네 기능을 모두 켠 스크롤 |
 
 "워밍업"은 풀이 뷰포트 + 미리 만들기 구간 분량의 셀을 만들어 두고, 크기·ID 배열이 개수만큼 커진 상태다. 그 뒤로는 셀을 새로 만들지 않고 풀에서 돌려 쓴다.
 첫 스크롤의 셀 생성 비용도 피하려면 [풀 미리 채우기](pool-prewarm.md)로 화면을 열 때 만들어 둔다.
@@ -72,7 +72,7 @@ public void Next()
 | `CyScroller.UpdateActiveRange` | 활성 범위 갱신 (셀 바인딩 포함) |
 | `CyScroller.Relayout` | 위치를 지키는 재배치 |
 | `CyScroller.ApplyUpdates` | 증분 변경 적용 |
-| `CyScroller.Resize` | 셀 크기 애니메이션 한 걸음 (다음 버전) |
+| `CyScroller.Resize` | 셀 크기 애니메이션 한 걸음 |
 
 `GetCellView`의 바인딩 비용은 `UpdateActiveRange` 안에 잡힌다. 무거운 바인딩은 여기서 먼저 보인다.
 

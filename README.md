@@ -26,7 +26,7 @@ Unity uGUI `ScrollRect` 위에서 동작하는 가상화 스크롤러. 보이는
 ```json
 {
   "dependencies": {
-    "com.cykim.scroller": "https://github.com/cyKim0115/cyKimScroller.git?path=/Packages/com.cykim.scroller#v0.2.1"
+    "com.cykim.scroller": "https://github.com/cyKim0115/cyKimScroller.git?path=/Packages/com.cykim.scroller#v0.3.0"
   }
 }
 ```
