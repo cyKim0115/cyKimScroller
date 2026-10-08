@@ -5,13 +5,14 @@ icon: eye
 
 # 셀 훅
 
-셀 뷰는 세 가지를 받을 수 있다.
+셀 뷰는 네 가지를 받을 수 있다.
 
 | 알고 싶은 것 | 받는 곳 |
 |---|---|
 | 정말 화면에 보이기 시작했나 / 사라졌나 | `OnBecameVisible()` / `OnBecameHidden()`, 이벤트 `CellViewWillDisplay` / `CellViewDidEndDisplay` |
 | 뷰포트 안 어디에 있나 | `OnViewportPositionChanged(normalizedOffset)`, 이벤트 `CellViewPositionChanged` |
 | 지금 바인딩이 아직 유효한가 | `BindVersion` |
+| 스크롤이 멈췄나 (미뤄 둔 로드 시작) | `OnScrollerSettled()`, 이벤트 `ScrollerSettled` — [정착과 고속 스크롤](settled-and-fast-scrolling.md) (다음 버전) |
 
 ## 표시 이벤트
 
@@ -106,7 +107,7 @@ public class CardCellView : CyScrollerCellView
 {% endhint %}
 
 {% hint style="info" %}
-셀 뷰 훅(`OnBecameVisible`·`OnBecameHidden`·`OnViewportPositionChanged`·`OnDataIndexChanged`)은 `protected internal`이다. 다른 어셈블리에서는 `protected override`로 재정의한다.
+셀 뷰 훅(`OnBecameVisible`·`OnBecameHidden`·`OnViewportPositionChanged`·`OnDataIndexChanged`·`OnScrollerSettled`)은 `protected internal`이다. 다른 어셈블리에서는 `protected override`로 재정의한다.
 위치 훅은 레이아웃 캐시로만 계산해 할당이 없고, 꺼져 있으면 계산 자체를 건너뛴다.
 {% endhint %}
 
