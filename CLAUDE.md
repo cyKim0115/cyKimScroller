@@ -75,7 +75,7 @@ MCP 패키지 버전은 전역 `unityMCP` 서버(`mcpforunityserver==10.2.0`)와
 
 - 다른 Unity 프로젝트가 같이 열려 있으면 `set_active_instance`로 `cyKimScroller@...`를 먼저 고른다
 - CLI `-batchmode` / `-executeMethod`는 쓰지 않는다
-- Unity API 문서는 `unity-docs` MCP
+- Unity API 문서는 `unityMCP`의 `unity_docs` 도구
 
 ## C# 컨벤션
 
