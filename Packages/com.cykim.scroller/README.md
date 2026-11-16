@@ -1,6 +1,7 @@
 # CyKim Scroller
 
 [![version](https://img.shields.io/github/v/tag/cyKim0115/cyKimScroller?label=version&color=567e65)](https://github.com/cyKim0115/cyKimScroller/tags)
+[![openupm](https://img.shields.io/npm/v/com.cykim.scroller?label=openupm&registry_uri=https://package.openupm.com&color=96bea1)](https://openupm.com/packages/com.cykim.scroller/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-567e65)](https://github.com/cyKim0115/cyKimScroller/blob/master/Packages/com.cykim.scroller/LICENSE.md)
 ![Unity 6000.0+](https://img.shields.io/badge/Unity-6000.0%2B-3f6150)
 ![uGUI ScrollRect](https://img.shields.io/badge/uGUI-ScrollRect-3f6150)

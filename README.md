@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-567e65)](LICENSE)
 ![Unity 6000.0+](https://img.shields.io/badge/Unity-6000.0%2B-3f6150)
 ![uGUI ScrollRect](https://img.shields.io/badge/uGUI-ScrollRect-3f6150)
-![UPM git URL](https://img.shields.io/badge/UPM-git%20URL-96bea1)
+[![openupm](https://img.shields.io/npm/v/com.cykim.scroller?label=openupm&registry_uri=https://package.openupm.com&color=96bea1)](https://openupm.com/packages/com.cykim.scroller/)
 
 Unity uGUI `ScrollRect` 위에서 동작하는 가상화 스크롤러. 보이는 구간의 셀만 만들어 재사용하고,
 나머지는 빈 스크롤 길이로 둔다. 항목이 10만 개여도 셀은 보이는 구간과 미리 만들기 구간만큼만 있다.
