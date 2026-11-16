@@ -1,0 +1,39 @@
+{
+  "name": "com.cykim.scroller",
+  "version": "0.4.0",
+  "displayName": "CyKim Scroller",
+  "description": "Virtualized uGUI ScrollRect with cell recycling, variable cell sizes, animated scrolling to an index, looping and snapping. Only the visible cells exist; everything else is empty scroll extent.",
+  "unity": "6000.0",
+  "license": "MIT",
+  "documentationUrl": "https://github.com/cyKim0115/cyKimScroller/blob/master/Packages/com.cykim.scroller/README.md",
+  "changelogUrl": "https://github.com/cyKim0115/cyKimScroller/blob/master/Packages/com.cykim.scroller/CHANGELOG.md",
+  "licensesUrl": "https://github.com/cyKim0115/cyKimScroller/blob/master/Packages/com.cykim.scroller/LICENSE.md",
+  "dependencies": {
+    "com.unity.ugui": "2.0.0"
+  },
+  "keywords": [
+    "ui",
+    "ugui",
+    "scroll",
+    "scrollrect",
+    "virtualization",
+    "recycle",
+    "list"
+  ],
+  "author": {
+    "name": "cyKim",
+    "url": "https://github.com/cyKim0115"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cyKim0115/cyKimScroller.git",
+    "directory": "Packages/com.cykim.scroller"
+  },
+  "samples": [
+    {
+      "displayName": "Basic",
+      "description": "Vertical list with variable cell heights, a horizontal looping carousel and a looping wheel picker that snap to the center and style their cells with the viewport position hook, jump buttons, and edit buttons that insert, remove and move list items with incremental updates while keeping the view in place. Builds its UI at runtime, so it only needs an empty scene.",
+      "path": "Samples~/Basic"
+    }
+  ]
+}

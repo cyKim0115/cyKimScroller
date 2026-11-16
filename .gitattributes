@@ -1,0 +1,35 @@
+# 윈도우/맥 혼용 환경에서 개행 차이로 변경점이 잡히는 것을 막는다.
+* text=auto eol=lf
+
+# Unity 텍스트 에셋 (Force Text 직렬화)
+*.unity      text eol=lf
+*.prefab     text eol=lf
+*.asset      text eol=lf
+*.mat        text eol=lf
+*.anim       text eol=lf
+*.controller text eol=lf
+*.inputactions text eol=lf
+*.meta       text eol=lf
+
+# 소스·설정
+*.cs         text eol=lf diff=csharp
+*.asmdef     text eol=lf
+*.asmref     text eol=lf
+*.uss        text eol=lf
+*.uxml       text eol=lf
+*.shader     text eol=lf
+*.hlsl       text eol=lf
+*.json       text eol=lf
+*.md         text eol=lf
+
+# 바이너리
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.psd  binary
+*.tga  binary
+*.ttf  binary
+*.otf  binary
+*.wlt  binary
+*.dll  binary
+*.so   binary

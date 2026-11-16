@@ -1,0 +1,11 @@
+$schema: https://api.gitbook.com/gitbook-docs.yaml
+site:
+  title: CyKim Scroller
+  structure:
+    - type: space
+      key: space-scroller
+      title: CyKim Scroller
+      path: docs
+      default: true
+      content:
+        directory: ./
